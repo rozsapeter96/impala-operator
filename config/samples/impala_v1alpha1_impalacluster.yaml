@@ -1,0 +1,52 @@
+apiVersion: impala.operator.dev/v1alpha1
+kind: ImpalaCluster
+metadata:
+  labels:
+    app.kubernetes.io/name: impala-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: impalacluster-sample
+spec:
+  image:
+    repository: apache/impala
+    version: 4.5.2
+  clusterConfig:
+    hiveMetastore:
+      uris: thrift://hive-metastore:9083
+    storage:
+      s3:
+        endpoint: http://minio:9000
+        pathStyleAccess: true
+        credentialsSecretRef:
+          name: impala-s3-credentials
+    admissionControl:
+      pools:
+        - name: default
+          maxRunningQueries: 10
+          maxQueuedQueries: 50
+          queueTimeoutMs: 60000
+          maxQueryMemLimit: 4gb
+          minQueryMemLimit: 256mb
+  catalog:
+    config:
+      jvmHeap: 1g
+    resources:
+      requests: {cpu: 500m, memory: 2Gi}
+  coordinators:
+    replicas: 1
+    config:
+      memLimit: 2gb
+      jvmHeap: 1g
+      gracefulShutdownDeadlineSeconds: 300
+    resources:
+      requests: {cpu: "1", memory: 3Gi}
+  executorGroups:
+    - name: small
+      pool: default
+      size: 2
+      groups: 1
+      config:
+        memLimit: 2gb
+        jvmHeap: 512m
+        gracefulShutdownDeadlineSeconds: 600
+      resources:
+        requests: {cpu: "1", memory: 3Gi}

@@ -1,0 +1,80 @@
+# A minimal cluster sized for a single-node kind cluster.
+apiVersion: impala.operator.dev/v1alpha1
+kind: ImpalaCluster
+metadata:
+  name: e2e
+spec:
+  image:
+    version: 4.5.2
+  clusterConfig:
+    hiveMetastore:
+      uris: thrift://hms:9083
+    storage:
+      s3:
+        endpoint: http://minio:9000
+        pathStyleAccess: true
+        credentialsSecretRef:
+          name: impala-s3-credentials
+    security:
+      # kind >= 0.24 enforces NetworkPolicy (kube-network-policies), so this
+      # exercises the generated policy: the client pod in this namespace
+      # reaches HS2 and the operator's autoscaler reaches the web port.
+      networkPolicy:
+        enabled: true
+    admissionControl:
+      pools:
+        - name: default
+          maxRunningQueries: 1
+          maxQueuedQueries: 10
+          queueTimeoutMs: 300000
+        # Served by the "burst" family below, which starts with zero groups
+        # and is sized so that one query saturates a group's single
+        # admission slot. It exercises cold start, slot-driven scale-up and
+        # idle scale-down without a permanently running extra executor.
+        - name: burst
+          maxRunningQueries: 10
+          maxQueuedQueries: 10
+          queueTimeoutMs: 300000
+  statestore:
+    config: {jvmHeap: 256m}
+  catalog:
+    config: {jvmHeap: 768m}
+  coordinators:
+    replicas: 1
+    config:
+      memLimit: 1500mb
+      jvmHeap: 768m
+      gracefulShutdownDeadlineSeconds: 120
+  executorGroups:
+    - name: small
+      pool: default
+      size: 1
+      groups: 1
+      autoscaling:
+        enabled: true
+        minGroups: 1
+        maxGroups: 2
+        scaleUpDelaySeconds: 10
+        scaleDownDelaySeconds: 30
+        cooldownSeconds: 10
+      config:
+        memLimit: 1500mb
+        jvmHeap: 384m
+        gracefulShutdownDeadlineSeconds: 120
+    - name: burst
+      pool: burst
+      size: 1
+      groups: 0
+      args:
+        - -admission_control_slots=1
+      autoscaling:
+        enabled: true
+        minGroups: 0
+        maxGroups: 2
+        scaleUpDelaySeconds: 10
+        scaleDownDelaySeconds: 30
+        cooldownSeconds: 10
+      config:
+        memLimit: 1024mb
+        jvmHeap: 384m
+        gracefulShutdownDeadlineSeconds: 120

@@ -1,0 +1,7 @@
+processor:
+  ignoreTypes:
+    - "ImpalaClusterList$"
+  ignoreFields:
+    - "TypeMeta$"
+render:
+  kubernetesVersion: "1.37"

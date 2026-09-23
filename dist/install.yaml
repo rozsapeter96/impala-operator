@@ -1,0 +1,1716 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: impala-operator
+    control-plane: controller-manager
+  name: impala-operator-system
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: impalaclusters.impala.operator.dev
+spec:
+  group: impala.operator.dev
+  names:
+    kind: ImpalaCluster
+    listKind: ImpalaClusterList
+    plural: impalaclusters
+    singular: impalacluster
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.image.version
+      name: Version
+      type: string
+    - jsonPath: .status.coordinators.readyReplicas
+      name: Coordinators
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.endpoints.hiveServer2
+      name: HS2
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ImpalaCluster is the Schema for the impalaclusters API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of ImpalaCluster
+            properties:
+              catalog:
+                description: CatalogSpec configures the catalog StatefulSet.
+                properties:
+                  args:
+                    description: |-
+                      args are extra daemon flags appended after the operator-generated ones,
+                      so they take precedence.
+                    items:
+                      type: string
+                    type: array
+                  config:
+                    description: CatalogConfig configures catalogd.
+                    properties:
+                      catalogTopicMode:
+                        default: minimal
+                        description: catalogTopicMode is passed to -catalog_topic_mode.
+                        enum:
+                        - minimal
+                        - full
+                        - mixed
+                        type: string
+                      jvmHeap:
+                        description: jvmHeap is the embedded JVM -Xmx, e.g. "2g".
+                        type: string
+                    type: object
+                  env:
+                    description: env adds environment variables to the daemon container.
+                    x-kubernetes-preserve-unknown-fields: true
+                  podOverrides:
+                    description: PodOverrides customises the generated pod template
+                      of a component.
+                    properties:
+                      affinity:
+                        x-kubernetes-preserve-unknown-fields: true
+                      annotations:
+                        additionalProperties:
+                          type: string
+                        type: object
+                      automountServiceAccountToken:
+                        description: |-
+                          automountServiceAccountToken controls whether the ServiceAccount token
+                          is mounted into the daemon pods. Impala executes user SQL and native
+                          UDFs, so the token is withheld by default; it is mounted when
+                          serviceAccountName is set unless this is explicitly false.
+                        type: boolean
+                      initContainers:
+                        x-kubernetes-preserve-unknown-fields: true
+                      labels:
+                        additionalProperties:
+                          type: string
+                        type: object
+                      nodeSelector:
+                        additionalProperties:
+                          type: string
+                        type: object
+                      priorityClassName:
+                        type: string
+                      securityContext:
+                        x-kubernetes-preserve-unknown-fields: true
+                      serviceAccountName:
+                        description: |-
+                          serviceAccountName runs the pods under a specific ServiceAccount, for
+                          example one bound to a cloud IAM role.
+                        type: string
+                      sidecars:
+                        x-kubernetes-preserve-unknown-fields: true
+                      tolerations:
+                        x-kubernetes-preserve-unknown-fields: true
+                      topologySpreadConstraints:
+                        x-kubernetes-preserve-unknown-fields: true
+                      volumeMounts:
+                        x-kubernetes-preserve-unknown-fields: true
+                      volumes:
+                        x-kubernetes-preserve-unknown-fields: true
+                    type: object
+                  replicas:
+                    default: 1
+                    description: replicas is 1, or 2 to enable catalogd active/standby
+                      HA.
+                    format: int32
+                    maximum: 2
+                    minimum: 1
+                    type: integer
+                  resources:
+                    description: resources for the daemon container.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                type: object
+              clusterConfig:
+                description: ClusterConfig holds settings shared by every daemon.
+                properties:
+                  admissionControl:
+                    description: AdmissionControlSpec generates fair-scheduler.xml
+                      and llama-site.xml.
+                    properties:
+                      defaultPool:
+                        description: |-
+                          defaultPool receives queries that do not set REQUEST_POOL. Defaults to
+                          the first pool. Queries naming an unknown pool are rejected.
+                        maxLength: 63
+                        type: string
+                      pools:
+                        description: |-
+                          pools defines admission-control resource pools. When empty Impala uses
+                          its built-in "default-pool".
+                        items:
+                          description: PoolSpec is an admission-control resource pool.
+                            Impala names it "root.<name>".
+                          properties:
+                            defaultQueryOptions:
+                              additionalProperties:
+                                type: string
+                              description: defaultQueryOptions applied to every query
+                                in the pool.
+                              type: object
+                            maxMemResources:
+                              description: |-
+                                maxMemResources is the pool's aggregate memory cap in fair-scheduler
+                                syntax, e.g. "50000 mb".
+                              type: string
+                            maxQueryMemLimit:
+                              description: maxQueryMemLimit caps the per-node memory
+                                of a query, e.g. "8gb".
+                              type: string
+                            maxQueuedQueries:
+                              description: maxQueuedQueries limits queued queries
+                                before rejection.
+                              format: int32
+                              type: integer
+                            maxRunningQueries:
+                              description: maxRunningQueries limits concurrently running
+                                queries (-1 = unlimited).
+                              format: int32
+                              type: integer
+                            minQueryMemLimit:
+                              description: minQueryMemLimit floors the per-node memory
+                                of a query, e.g. "1gb".
+                              type: string
+                            name:
+                              description: name of the pool without the "root." prefix.
+                              maxLength: 63
+                              pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                              type: string
+                            queueTimeoutMs:
+                              description: queueTimeoutMs is how long a query may
+                                wait in the queue.
+                              format: int64
+                              type: integer
+                          required:
+                          - name
+                          type: object
+                        maxItems: 64
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                    type: object
+                    x-kubernetes-validations:
+                    - message: defaultPool must name one of the pools
+                      rule: '!has(self.defaultPool) || !has(self.pools) || self.pools.exists(p,
+                        p.name == self.defaultPool)'
+                  configOverrides:
+                    additionalProperties:
+                      additionalProperties:
+                        type: string
+                      type: object
+                    description: |-
+                      configOverrides adds or replaces properties in the generated Hadoop-style
+                      XML files, keyed by file name ("hive-site.xml", "core-site.xml",
+                      "hdfs-site.xml").
+                    type: object
+                  hiveMetastore:
+                    description: HiveMetastoreSpec points Impala at an external Hive
+                      Metastore.
+                    properties:
+                      eventPollingIntervalSeconds:
+                        default: 1
+                        description: |-
+                          eventPollingIntervalSeconds sets -hms_event_polling_interval_s on catalogd.
+                          0 disables HMS event processing.
+                        format: int32
+                        minimum: 0
+                        type: integer
+                      uris:
+                        description: uris is the value of hive.metastore.uris, e.g.
+                          "thrift://hms.default.svc:9083".
+                        minLength: 1
+                        type: string
+                    required:
+                    - uris
+                    type: object
+                  kudu:
+                    description: KuduSpec configures an optional Kudu integration.
+                    properties:
+                      masterHosts:
+                        description: masterHosts is the value of -kudu_master_hosts,
+                          e.g. "kudu-master-0:7051,kudu-master-1:7051".
+                        minLength: 1
+                        type: string
+                    required:
+                    - masterHosts
+                    type: object
+                  logging:
+                    description: LoggingSpec controls glog output.
+                    properties:
+                      verbosity:
+                        default: 1
+                        description: verbosity is the glog -v level.
+                        format: int32
+                        maximum: 3
+                        minimum: 0
+                        type: integer
+                    type: object
+                  security:
+                    description: SecuritySpec groups authentication, encryption and
+                      network isolation settings.
+                    properties:
+                      kerberos:
+                        description: KerberosSpec enables Kerberos authentication.
+                        properties:
+                          enabled:
+                            description: enabled turns on Kerberos for clients and
+                              internal RPC.
+                            type: boolean
+                          keytabSecretRef:
+                            description: keytabSecretRef names a Secret containing
+                              the keytab under key "impala.keytab".
+                            properties:
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          krb5ConfigMapRef:
+                            description: krb5ConfigMapRef names a ConfigMap containing
+                              krb5.conf under key "krb5.conf".
+                            properties:
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          principal:
+                            description: principal in "service/_HOST@REALM" form,
+                              passed to -principal.
+                            type: string
+                        type: object
+                        x-kubernetes-validations:
+                        - message: kerberos.principal and kerberos.keytabSecretRef
+                            are required when kerberos.enabled is true
+                          rule: '!has(self.enabled) || !self.enabled || (has(self.principal)
+                            && has(self.keytabSecretRef))'
+                      ldap:
+                        description: LDAPSpec enables LDAP password authentication
+                          for clients.
+                        properties:
+                          allowPasswordsInClear:
+                            description: allowPasswordsInClear sets -ldap_passwords_in_clear_ok
+                              (only for testing).
+                            type: boolean
+                          baseDN:
+                            description: baseDN is passed to -ldap_baseDN.
+                            type: string
+                          bindPattern:
+                            description: bindPattern is passed to -ldap_bind_pattern,
+                              e.g. "uid=#UID,ou=people,dc=example,dc=com".
+                            type: string
+                          caCertSecretRef:
+                            description: caCertSecretRef names a Secret with key "ca.crt"
+                              for -ldap_ca_certificate.
+                            properties:
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          domain:
+                            description: domain is passed to -ldap_domain (Active
+                              Directory style).
+                            type: string
+                          enabled:
+                            description: enabled turns on -enable_ldap_auth.
+                            type: boolean
+                          uri:
+                            description: uri of the LDAP server, e.g. "ldaps://ldap.example.com".
+                            type: string
+                        type: object
+                      networkPolicy:
+                        description: |-
+                          NetworkPolicySpec isolates the cluster's daemons on the pod network.
+                          Without Kerberos, Impala's internal ports (statestore, catalog, KRPC,
+                          statestore subscriber) accept any peer, so any pod that can reach them can
+                          register as an executor and receive query data. Enabling this renders one
+                          NetworkPolicy per cluster that admits:
+
+                            - every port from the cluster's own pods;
+                            - the HiveServer2 client ports (21050, 28000) from clientFrom, or from
+                              anywhere when clientFrom is empty;
+                            - the daemon web UI ports (25000, 25010, 25020) from the operator's own
+                              namespace (the autoscaler scrapes them) and from webUIFrom.
+
+                          Egress is not restricted. Kubelet probes are exempt from NetworkPolicy.
+                        properties:
+                          clientFrom:
+                            description: |-
+                              clientFrom lists the peers allowed to reach the coordinator client
+                              ports. Leave empty to allow any source.
+                            x-kubernetes-preserve-unknown-fields: true
+                          enabled:
+                            type: boolean
+                          webUIFrom:
+                            description: |-
+                              webUIFrom lists additional peers allowed to reach the daemon web UI
+                              ports, e.g. a Prometheus namespace. Cluster pods and the operator's
+                              namespace are always allowed.
+                            x-kubernetes-preserve-unknown-fields: true
+                        type: object
+                      tls:
+                        description: TLSSpec enables TLS for client, internal and
+                          web endpoints.
+                        properties:
+                          certSecretRef:
+                            description: |-
+                              certSecretRef names a kubernetes.io/tls Secret (tls.crt, tls.key, ca.crt).
+                              The certificate must cover the coordinator and executor pod DNS names,
+                              typically with a wildcard "*.<cluster>-<component>-hl.<ns>.svc.cluster.local".
+                            properties:
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          enabled:
+                            description: |-
+                              enabled turns on TLS for HiveServer2/Beeswax client connections and the
+                              web UI of all daemons.
+                            type: boolean
+                          internal:
+                            default: true
+                            description: internal also encrypts daemon-to-daemon traffic
+                              (Thrift and KRPC).
+                            type: boolean
+                          minimumVersion:
+                            description: minimumVersion is passed to -ssl_minimum_version.
+                            enum:
+                            - tlsv1.2
+                            - tlsv1.3
+                            type: string
+                        type: object
+                        x-kubernetes-validations:
+                        - message: tls.certSecretRef is required when tls.enabled
+                            is true
+                          rule: '!has(self.enabled) || !self.enabled || has(self.certSecretRef)'
+                    type: object
+                  storage:
+                    description: StorageSpec configures the object stores Impala reads
+                      and writes.
+                    properties:
+                      s3:
+                        description: s3 enables S3A configuration in core-site.xml.
+                        properties:
+                          credentialsSecretRef:
+                            description: |-
+                              credentialsSecretRef names a Secret with keys AWS_ACCESS_KEY_ID and
+                              AWS_SECRET_ACCESS_KEY (optionally AWS_SESSION_TOKEN). They are injected as
+                              environment variables. Omit to rely on IAM roles / IRSA.
+                            properties:
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          endpoint:
+                            description: endpoint overrides fs.s3a.endpoint (leave
+                              empty for AWS).
+                            type: string
+                          pathStyleAccess:
+                            description: pathStyleAccess sets fs.s3a.path.style.access,
+                              required by MinIO and most on-prem stores.
+                            type: boolean
+                          region:
+                            description: region sets fs.s3a.endpoint.region.
+                            type: string
+                        type: object
+                    type: object
+                required:
+                - hiveMetastore
+                type: object
+              coordinators:
+                description: CoordinatorSpec configures the coordinator StatefulSet.
+                properties:
+                  args:
+                    description: |-
+                      args are extra daemon flags appended after the operator-generated ones,
+                      so they take precedence.
+                    items:
+                      type: string
+                    type: array
+                  config:
+                    description: CoordinatorConfig configures coordinator impalads.
+                    properties:
+                      defaultQueryOptions:
+                        additionalProperties:
+                          type: string
+                        description: defaultQueryOptions is passed to -default_query_options.
+                        type: object
+                      gracefulShutdownDeadlineSeconds:
+                        default: 900
+                        description: |-
+                          gracefulShutdownDeadlineSeconds is -shutdown_deadline_s. The pod's
+                          terminationGracePeriodSeconds is derived from it.
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      gracefulShutdownGracePeriodSeconds:
+                        default: 30
+                        description: |-
+                          gracefulShutdownGracePeriodSeconds is -shutdown_grace_period_s: the
+                          minimum time a quiescing daemon waits for coordinators to notice.
+                        format: int32
+                        minimum: 0
+                        type: integer
+                      jvmHeap:
+                        description: jvmHeap is the embedded JVM -Xmx, e.g. "2g".
+                        type: string
+                      memLimit:
+                        description: memLimit is passed to -mem_limit, e.g. "8gb"
+                          or "80%".
+                        type: string
+                    type: object
+                  env:
+                    description: env adds environment variables to the daemon container.
+                    x-kubernetes-preserve-unknown-fields: true
+                  podOverrides:
+                    description: PodOverrides customises the generated pod template
+                      of a component.
+                    properties:
+                      affinity:
+                        x-kubernetes-preserve-unknown-fields: true
+                      annotations:
+                        additionalProperties:
+                          type: string
+                        type: object
+                      automountServiceAccountToken:
+                        description: |-
+                          automountServiceAccountToken controls whether the ServiceAccount token
+                          is mounted into the daemon pods. Impala executes user SQL and native
+                          UDFs, so the token is withheld by default; it is mounted when
+                          serviceAccountName is set unless this is explicitly false.
+                        type: boolean
+                      initContainers:
+                        x-kubernetes-preserve-unknown-fields: true
+                      labels:
+                        additionalProperties:
+                          type: string
+                        type: object
+                      nodeSelector:
+                        additionalProperties:
+                          type: string
+                        type: object
+                      priorityClassName:
+                        type: string
+                      securityContext:
+                        x-kubernetes-preserve-unknown-fields: true
+                      serviceAccountName:
+                        description: |-
+                          serviceAccountName runs the pods under a specific ServiceAccount, for
+                          example one bound to a cloud IAM role.
+                        type: string
+                      sidecars:
+                        x-kubernetes-preserve-unknown-fields: true
+                      tolerations:
+                        x-kubernetes-preserve-unknown-fields: true
+                      topologySpreadConstraints:
+                        x-kubernetes-preserve-unknown-fields: true
+                      volumeMounts:
+                        x-kubernetes-preserve-unknown-fields: true
+                      volumes:
+                        x-kubernetes-preserve-unknown-fields: true
+                    type: object
+                  replicas:
+                    default: 1
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  resources:
+                    description: resources for the daemon container.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  service:
+                    description: ServiceSpec customises the client-facing Service.
+                    properties:
+                      annotations:
+                        additionalProperties:
+                          type: string
+                        type: object
+                      type:
+                        default: ClusterIP
+                        description: Service Type string describes ingress methods
+                          for a service
+                        type: string
+                    type: object
+                type: object
+              executorGroups:
+                items:
+                  description: |-
+                    ExecutorGroupSpec describes a family of identically sized executor groups.
+                    Each group instance is one StatefulSet registered with Impala as
+                    "<pool>-<name>-<index>".
+                  properties:
+                    args:
+                      description: |-
+                        args are extra daemon flags appended after the operator-generated ones,
+                        so they take precedence.
+                      items:
+                        type: string
+                      type: array
+                    autoscaling:
+                      description: |-
+                        AutoscalingSpec lets the operator add and remove executor group instances
+                        based on admission-control queue metrics.
+                      properties:
+                        cooldownSeconds:
+                          default: 120
+                          description: cooldownSeconds is the minimum time between
+                            two scaling actions.
+                          format: int32
+                          minimum: 0
+                          type: integer
+                        enabled:
+                          type: boolean
+                        maxGroups:
+                          default: 5
+                          format: int32
+                          minimum: 1
+                          type: integer
+                        minGroups:
+                          default: 1
+                          format: int32
+                          minimum: 0
+                          type: integer
+                        scaleDownDelaySeconds:
+                          default: 300
+                          description: scaleDownDelaySeconds is how long a group must
+                            be idle before it is removed.
+                          format: int32
+                          minimum: 0
+                          type: integer
+                        scaleUpDelaySeconds:
+                          default: 30
+                          description: scaleUpDelaySeconds is how long queries must
+                            be queued before a group is added.
+                          format: int32
+                          minimum: 0
+                          type: integer
+                      type: object
+                    config:
+                      description: ExecutorConfig configures executor impalads.
+                      properties:
+                        dataCache:
+                          description: |-
+                            dataCache provisions a PVC for the remote read cache (-data_cache).
+                            Omit to disable the cache. Immutable once the executor group exists.
+                          properties:
+                            size:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            storageClassName:
+                              type: string
+                          required:
+                          - size
+                          type: object
+                        gracefulShutdownDeadlineSeconds:
+                          default: 900
+                          description: |-
+                            gracefulShutdownDeadlineSeconds is -shutdown_deadline_s. The pod's
+                            terminationGracePeriodSeconds is derived from it.
+                          format: int32
+                          minimum: 1
+                          type: integer
+                        gracefulShutdownGracePeriodSeconds:
+                          default: 30
+                          description: |-
+                            gracefulShutdownGracePeriodSeconds is -shutdown_grace_period_s: the
+                            minimum time a quiescing daemon waits for coordinators to notice.
+                          format: int32
+                          minimum: 0
+                          type: integer
+                        jvmHeap:
+                          description: jvmHeap is the embedded JVM -Xmx, e.g. "2g".
+                          type: string
+                        memLimit:
+                          description: memLimit is passed to -mem_limit, e.g. "8gb"
+                            or "80%".
+                          type: string
+                        scratch:
+                          description: |-
+                            scratch provisions a PVC for spill-to-disk (-scratch_dirs). Omit to use
+                            an emptyDir. Immutable once the executor group exists, because it
+                            becomes a StatefulSet volumeClaimTemplate.
+                          properties:
+                            size:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            storageClassName:
+                              type: string
+                          required:
+                          - size
+                          type: object
+                      type: object
+                    env:
+                      description: env adds environment variables to the daemon container.
+                      x-kubernetes-preserve-unknown-fields: true
+                    groups:
+                      default: 1
+                      description: groups is the number of group instances. Ignored
+                        while autoscaling is enabled.
+                      format: int32
+                      minimum: 0
+                      type: integer
+                    minHealthySize:
+                      description: |-
+                        minHealthySize is the number of registered executors needed before the
+                        group accepts queries (defaults to size).
+                      format: int32
+                      minimum: 1
+                      type: integer
+                    name:
+                      description: |-
+                        name identifies this executor group family; it becomes part of Kubernetes
+                        object names and Impala executor group names.
+                      maxLength: 20
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    podOverrides:
+                      description: PodOverrides customises the generated pod template
+                        of a component.
+                      properties:
+                        affinity:
+                          x-kubernetes-preserve-unknown-fields: true
+                        annotations:
+                          additionalProperties:
+                            type: string
+                          type: object
+                        automountServiceAccountToken:
+                          description: |-
+                            automountServiceAccountToken controls whether the ServiceAccount token
+                            is mounted into the daemon pods. Impala executes user SQL and native
+                            UDFs, so the token is withheld by default; it is mounted when
+                            serviceAccountName is set unless this is explicitly false.
+                          type: boolean
+                        initContainers:
+                          x-kubernetes-preserve-unknown-fields: true
+                        labels:
+                          additionalProperties:
+                            type: string
+                          type: object
+                        nodeSelector:
+                          additionalProperties:
+                            type: string
+                          type: object
+                        priorityClassName:
+                          type: string
+                        securityContext:
+                          x-kubernetes-preserve-unknown-fields: true
+                        serviceAccountName:
+                          description: |-
+                            serviceAccountName runs the pods under a specific ServiceAccount, for
+                            example one bound to a cloud IAM role.
+                          type: string
+                        sidecars:
+                          x-kubernetes-preserve-unknown-fields: true
+                        tolerations:
+                          x-kubernetes-preserve-unknown-fields: true
+                        topologySpreadConstraints:
+                          x-kubernetes-preserve-unknown-fields: true
+                        volumeMounts:
+                          x-kubernetes-preserve-unknown-fields: true
+                        volumes:
+                          x-kubernetes-preserve-unknown-fields: true
+                      type: object
+                    pool:
+                      description: |-
+                        pool is the admission-control pool served by these executors. Required
+                        when admissionControl.pools is set; otherwise the built-in default pool
+                        is used.
+                      maxLength: 63
+                      type: string
+                    resources:
+                      description: resources for the daemon container.
+                      properties:
+                        claims:
+                          description: |-
+                            Claims lists the names of resources, defined in spec.resourceClaims,
+                            that are used by this container.
+
+                            This field depends on the
+                            DynamicResourceAllocation feature gate.
+
+                            This field is immutable. It can only be set for containers.
+                          items:
+                            description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                            properties:
+                              name:
+                                description: |-
+                                  Name must match the name of one entry in pod.spec.resourceClaims of
+                                  the Pod where this field is used. It makes that resource available
+                                  inside a container.
+                                type: string
+                              request:
+                                description: |-
+                                  Request is the name chosen for a request in the referenced claim.
+                                  If empty, everything from the claim is made available, otherwise
+                                  only the result of this request.
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          type: array
+                          x-kubernetes-list-map-keys:
+                          - name
+                          x-kubernetes-list-type: map
+                        limits:
+                          additionalProperties:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          description: |-
+                            Limits describes the maximum amount of compute resources allowed.
+                            More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                          type: object
+                        requests:
+                          additionalProperties:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          description: |-
+                            Requests describes the minimum amount of compute resources required.
+                            If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                            otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                            More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                          type: object
+                      type: object
+                    size:
+                      description: size is the number of executors in each group instance.
+                      format: int32
+                      minimum: 1
+                      type: integer
+                  required:
+                  - name
+                  - size
+                  type: object
+                  x-kubernetes-validations:
+                  - message: minHealthySize must not exceed size
+                    rule: '!has(self.minHealthySize) || self.minHealthySize <= self.size'
+                  - message: autoscaling.minGroups must not exceed maxGroups
+                    rule: '!has(self.autoscaling) || !has(self.autoscaling.enabled)
+                      || !self.autoscaling.enabled || (!has(self.autoscaling.minGroups)
+                      || !has(self.autoscaling.maxGroups) || self.autoscaling.minGroups
+                      <= self.autoscaling.maxGroups)'
+                  - message: config.scratch is immutable (StatefulSet volumeClaimTemplates
+                      cannot change); remove and re-add the executor group instead
+                    rule: (has(self.config) && has(self.config.scratch)) == (has(oldSelf.config)
+                      && has(oldSelf.config.scratch)) && (!has(self.config) || !has(self.config.scratch)
+                      || self.config.scratch == oldSelf.config.scratch)
+                  - message: config.dataCache is immutable (StatefulSet volumeClaimTemplates
+                      cannot change); remove and re-add the executor group instead
+                    rule: (has(self.config) && has(self.config.dataCache)) == (has(oldSelf.config)
+                      && has(oldSelf.config.dataCache)) && (!has(self.config) || !has(self.config.dataCache)
+                      || self.config.dataCache == oldSelf.config.dataCache)
+                maxItems: 32
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              image:
+                description: ImageSpec selects the Impala container image family.
+                properties:
+                  pullPolicy:
+                    default: IfNotPresent
+                    description: pullPolicy for all Impala containers.
+                    type: string
+                  pullSecrets:
+                    description: pullSecrets for private registries.
+                    items:
+                      description: |-
+                        LocalObjectReference contains enough information to let you locate the
+                        referenced object inside the same namespace.
+                      properties:
+                        name:
+                          default: ""
+                          description: |-
+                            Name of the referent.
+                            This field is effectively required, but due to backwards compatibility is
+                            allowed to be empty. Instances of this type with an empty value here are
+                            almost certainly wrong.
+                            More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                          type: string
+                      type: object
+                      x-kubernetes-map-type: atomic
+                    type: array
+                  repository:
+                    default: apache/impala
+                    description: |-
+                      repository is the image repository. Component names are appended as
+                      "<version>-<component>" tags, matching the official apache/impala layout.
+                    type: string
+                  version:
+                    default: 4.5.2
+                    description: version is the Impala version, e.g. "4.5.2".
+                    minLength: 1
+                    type: string
+                type: object
+              statestore:
+                description: StatestoreSpec configures the statestore StatefulSet.
+                properties:
+                  args:
+                    description: |-
+                      args are extra daemon flags appended after the operator-generated ones,
+                      so they take precedence.
+                    items:
+                      type: string
+                    type: array
+                  config:
+                    description: StatestoreConfig configures statestored.
+                    properties:
+                      jvmHeap:
+                        description: jvmHeap is the embedded JVM -Xmx, e.g. "2g".
+                        type: string
+                    type: object
+                  env:
+                    description: env adds environment variables to the daemon container.
+                    x-kubernetes-preserve-unknown-fields: true
+                  podOverrides:
+                    description: PodOverrides customises the generated pod template
+                      of a component.
+                    properties:
+                      affinity:
+                        x-kubernetes-preserve-unknown-fields: true
+                      annotations:
+                        additionalProperties:
+                          type: string
+                        type: object
+                      automountServiceAccountToken:
+                        description: |-
+                          automountServiceAccountToken controls whether the ServiceAccount token
+                          is mounted into the daemon pods. Impala executes user SQL and native
+                          UDFs, so the token is withheld by default; it is mounted when
+                          serviceAccountName is set unless this is explicitly false.
+                        type: boolean
+                      initContainers:
+                        x-kubernetes-preserve-unknown-fields: true
+                      labels:
+                        additionalProperties:
+                          type: string
+                        type: object
+                      nodeSelector:
+                        additionalProperties:
+                          type: string
+                        type: object
+                      priorityClassName:
+                        type: string
+                      securityContext:
+                        x-kubernetes-preserve-unknown-fields: true
+                      serviceAccountName:
+                        description: |-
+                          serviceAccountName runs the pods under a specific ServiceAccount, for
+                          example one bound to a cloud IAM role.
+                        type: string
+                      sidecars:
+                        x-kubernetes-preserve-unknown-fields: true
+                      tolerations:
+                        x-kubernetes-preserve-unknown-fields: true
+                      topologySpreadConstraints:
+                        x-kubernetes-preserve-unknown-fields: true
+                      volumeMounts:
+                        x-kubernetes-preserve-unknown-fields: true
+                      volumes:
+                        x-kubernetes-preserve-unknown-fields: true
+                    type: object
+                  resources:
+                    description: resources for the daemon container.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                type: object
+            required:
+            - clusterConfig
+            type: object
+            x-kubernetes-validations:
+            - message: every executorGroup.pool must reference a pool in clusterConfig.admissionControl.pools
+              rule: '!has(self.clusterConfig.admissionControl) || !has(self.clusterConfig.admissionControl.pools)
+                || size(self.clusterConfig.admissionControl.pools) == 0 || !has(self.executorGroups)
+                || self.executorGroups.all(g, has(g.pool) && self.clusterConfig.admissionControl.pools.exists(p,
+                p.name == g.pool))'
+          status:
+            description: status defines the observed state of ImpalaCluster
+            properties:
+              catalog:
+                description: ComponentStatus reports replica counts for one component.
+                properties:
+                  readyReplicas:
+                    format: int32
+                    type: integer
+                  replicas:
+                    format: int32
+                    type: integer
+                type: object
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              coordinators:
+                description: ComponentStatus reports replica counts for one component.
+                properties:
+                  readyReplicas:
+                    format: int32
+                    type: integer
+                  replicas:
+                    format: int32
+                    type: integer
+                type: object
+              endpoints:
+                description: EndpointsStatus lists the client-facing addresses.
+                properties:
+                  hiveServer2:
+                    type: string
+                  hiveServer2Http:
+                    type: string
+                  webUI:
+                    description: |-
+                      webUI is the coordinators' debug web UI, reachable through the headless
+                      Service only (it is unauthenticated and is not exposed on the client
+                      Service).
+                    type: string
+                type: object
+              executorGroups:
+                items:
+                  description: ExecutorGroupStatus reports on one executor group family.
+                  properties:
+                    desiredGroups:
+                      description: desiredGroups is the group count chosen by the
+                        autoscaler (or spec.groups).
+                      format: int32
+                      type: integer
+                    groups:
+                      items:
+                        description: ExecutorGroupInstanceStatus reports on one executor
+                          group instance.
+                        properties:
+                          healthy:
+                            description: healthy is true once at least minHealthySize
+                              executors are ready.
+                            type: boolean
+                          name:
+                            description: name is the Impala executor group name, e.g.
+                              "root.default-small-0".
+                            type: string
+                          readyReplicas:
+                            format: int32
+                            type: integer
+                          replicas:
+                            format: int32
+                            type: integer
+                        required:
+                        - name
+                        type: object
+                      type: array
+                      x-kubernetes-list-map-keys:
+                      - name
+                      x-kubernetes-list-type: map
+                    lastScaleTime:
+                      format: date-time
+                      type: string
+                    name:
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              observedGeneration:
+                format: int64
+                type: integer
+              statestore:
+                description: ComponentStatus reports replica counts for one component.
+                properties:
+                  readyReplicas:
+                    format: int32
+                    type: integer
+                  replicas:
+                    format: int32
+                    type: integer
+                type: object
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: impala-operator
+  name: impala-operator-controller-manager
+  namespace: impala-operator-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: impala-operator
+  name: impala-operator-leader-election-role
+  namespace: impala-operator-system
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: impala-operator
+  name: impala-operator-impalacluster-admin-role
+rules:
+- apiGroups:
+  - impala.operator.dev
+  resources:
+  - impalaclusters
+  verbs:
+  - '*'
+- apiGroups:
+  - impala.operator.dev
+  resources:
+  - impalaclusters/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: impala-operator
+  name: impala-operator-impalacluster-editor-role
+rules:
+- apiGroups:
+  - impala.operator.dev
+  resources:
+  - impalaclusters
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - impala.operator.dev
+  resources:
+  - impalaclusters/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: impala-operator
+  name: impala-operator-impalacluster-viewer-role
+rules:
+- apiGroups:
+  - impala.operator.dev
+  resources:
+  - impalaclusters
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - impala.operator.dev
+  resources:
+  - impalaclusters/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: impala-operator-manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - apps
+  resources:
+  - statefulsets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - impala.operator.dev
+  resources:
+  - impalaclusters
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - impala.operator.dev
+  resources:
+  - impalaclusters/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - impala.operator.dev
+  resources:
+  - impalaclusters/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - networkpolicies
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - policy
+  resources:
+  - poddisruptionbudgets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: impala-operator-metrics-auth-role
+rules:
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: impala-operator-metrics-reader
+rules:
+- nonResourceURLs:
+  - /metrics
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: impala-operator
+  name: impala-operator-leader-election-rolebinding
+  namespace: impala-operator-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: impala-operator-leader-election-role
+subjects:
+- kind: ServiceAccount
+  name: impala-operator-controller-manager
+  namespace: impala-operator-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: impala-operator
+  name: impala-operator-manager-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: impala-operator-manager-role
+subjects:
+- kind: ServiceAccount
+  name: impala-operator-controller-manager
+  namespace: impala-operator-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: impala-operator-metrics-auth-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: impala-operator-metrics-auth-role
+subjects:
+- kind: ServiceAccount
+  name: impala-operator-controller-manager
+  namespace: impala-operator-system
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: impala-operator
+    control-plane: controller-manager
+  name: impala-operator-controller-manager-metrics-service
+  namespace: impala-operator-system
+spec:
+  ports:
+  - name: https
+    port: 8443
+    protocol: TCP
+    targetPort: 8443
+  selector:
+    app.kubernetes.io/name: impala-operator
+    control-plane: controller-manager
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: impala-operator
+    control-plane: controller-manager
+  name: impala-operator-controller-manager
+  namespace: impala-operator-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: impala-operator
+      control-plane: controller-manager
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+      labels:
+        app.kubernetes.io/name: impala-operator
+        control-plane: controller-manager
+    spec:
+      containers:
+      - args:
+        - --metrics-bind-address=:8443
+        - --leader-elect
+        - --health-probe-bind-address=:8081
+        command:
+        - /manager
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        image: controller:latest
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        name: manager
+        ports:
+        - containerPort: 8081
+          name: health
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          limits:
+            cpu: 500m
+            memory: 128Mi
+          requests:
+            cpu: 10m
+            memory: 64Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        volumeMounts: []
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: impala-operator-controller-manager
+      terminationGracePeriodSeconds: 10
+      volumes: []

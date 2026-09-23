@@ -1,0 +1,77 @@
+# Hive Metastore (embedded Derby) from the Impala quickstart image, with the
+# warehouse on MinIO.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hms-conf
+data:
+  hive-site.xml: |
+    <?xml version="1.0"?>
+    <configuration>
+      <property><name>hive.metastore.uris</name><value>thrift://hms:9083</value></property>
+      <property><name>hive.metastore.warehouse.dir</name><value>s3a://warehouse/managed</value></property>
+      <property><name>hive.metastore.warehouse.external.dir</name><value>s3a://warehouse/external</value></property>
+      <property><name>hive.metastore.dml.events</name><value>true</value></property>
+      <property><name>hive.metastore.event.db.notification.api.auth</name><value>false</value></property>
+      <property><name>hive.support.concurrency</name><value>true</value></property>
+      <property><name>hive.txn.manager</name><value>org.apache.hadoop.hive.ql.lockmgr.DbTxnManager</value></property>
+      <property><name>javax.jdo.option.ConnectionDriverName</name><value>org.apache.derby.jdbc.EmbeddedDriver</value></property>
+      <property><name>javax.jdo.option.ConnectionURL</name><value>jdbc:derby:;databaseName=/var/lib/hive/metastore/metastore_db;create=true</value></property>
+      <property><name>hive.stats.autogather</name><value>false</value></property>
+    </configuration>
+  core-site.xml: |
+    <?xml version="1.0"?>
+    <configuration>
+      <property><name>fs.s3a.endpoint</name><value>http://minio:9000</value></property>
+      <property><name>fs.s3a.path.style.access</name><value>true</value></property>
+      <property><name>fs.s3a.connection.ssl.enabled</name><value>false</value></property>
+      <property><name>fs.s3a.access.key</name><value>minioadmin</value></property>
+      <property><name>fs.s3a.secret.key</name><value>minioadmin</value></property>
+    </configuration>
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hms
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: hms}
+  template:
+    metadata:
+      labels: {app: hms}
+    spec:
+      securityContext: {runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000}
+      containers:
+        - name: hms
+          image: apache/impala:4.5.2-impala_quickstart_hms
+          args: ["hms"]
+          env:
+            # The S3A filesystem ships under Hadoop's tools directory, which
+            # Hive does not put on the classpath by default.
+            - {name: HADOOP_CLASSPATH, value: "/opt/hadoop/share/hadoop/tools/lib/*"}
+          ports:
+            - {containerPort: 9083, name: thrift}
+          readinessProbe:
+            tcpSocket: {port: 9083}
+            periodSeconds: 5
+            failureThreshold: 60
+          resources:
+            requests: {cpu: 250m, memory: 1Gi}
+          volumeMounts:
+            - {name: conf, mountPath: /opt/hive/conf, readOnly: true}
+            - {name: data, mountPath: /var/lib/hive}
+      volumes:
+        - name: conf
+          configMap: {name: hms-conf}
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hms
+spec:
+  selector: {app: hms}
+  ports:
+    - {name: thrift, port: 9083, targetPort: 9083}
