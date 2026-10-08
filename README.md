@@ -8,13 +8,16 @@ It manages the full Impala process layout used in cloud deployments:
 * any number of **executor group** families, each a set of identically sized
   executor groups that can be scaled by hand or by the built-in autoscaler.
 
-The operator expects an external Hive Metastore and S3-compatible object
-storage; it does not run either.
+The operator expects an external Hive Metastore and/or one or more Iceberg
+REST catalogs (Apache Polaris, Lakekeeper, ...), plus S3-compatible object
+storage; it does not run any of them. With REST catalogs only, no catalogd
+is deployed.
 
 Documentation:
 
 * [doc/api.md](doc/api.md): ImpalaCluster field reference
 * [doc/autoscaling.md](doc/autoscaling.md): executor groups, autoscaling and graceful shutdown
+* [doc/catalogs.md](doc/catalogs.md): Hive Metastore and Iceberg REST catalogs (Apache Polaris)
 * [doc/security.md](doc/security.md): TLS, Kerberos, LDAP and credentials
 * [doc/implementation.md](doc/implementation.md): how the operator is built (packages, controllers, control flow)
 * [doc/base-design.md](doc/base-design.md): design decisions and the upstream facts behind them
@@ -59,7 +62,12 @@ metadata:
 spec:
   image: {repository: apache/impala, version: 4.5.2}
   clusterConfig:
-    hiveMetastore: {uris: thrift://hms:9083}
+    hiveMetastore: {uris: thrift://hms:9083}   # omit to run on REST catalogs only
+    icebergRestCatalogs:                       # optional, needs Impala master
+      - name: polaris
+        uri: http://polaris:8181/api/catalog
+        warehouse: lake
+        oauth2: {credentialSecretRef: {name: polaris-impala}, scope: PRINCIPAL_ROLE:ALL}
     storage:
       s3:
         endpoint: http://minio:9000        # omit for AWS
@@ -101,9 +109,9 @@ init containers).
 
 ### What the operator does
 
-* Renders `hive-site.xml`, `core-site.xml`, `fair-scheduler.xml` and
-  `llama-site.xml` into a ConfigMap. Changing the spec or a referenced Secret
-  rolls the affected pods.
+* Renders `hive-site.xml`, `core-site.xml`, `fair-scheduler.xml`,
+  `llama-site.xml` and one properties file per Iceberg REST catalog into a
+  ConfigMap. Changing the spec or a referenced Secret rolls the affected pods.
 * Rolls out changes in dependency order: statestore, catalog, coordinators,
   executor groups. A later tier is not touched until the previous one is ready.
 * Drains `impalad`s gracefully on scale-down and rolling restarts: the preStop
@@ -136,7 +144,8 @@ status:
 hack/install-tools.sh        # Go, kubebuilder, kind, kubectl, helm into ~/.local
 make test                    # unit + envtest
 make lint
-make test-e2e                # kind cluster with MinIO, HMS and a real Impala cluster
+make test-e2e                # kind cluster with MinIO, HMS, Polaris and real Impala clusters
+# DOCKER_BUILD_ARGS=--network=host make test-e2e   # if buildkit cannot reach the Go proxy
 make api-docs                # regenerate doc/api.md
 helm install impala-operator dist/chart   # or install via the generated chart
 ```

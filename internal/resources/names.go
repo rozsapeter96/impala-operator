@@ -60,6 +60,11 @@ const (
 	TLSCAFile   = SecretsDir + "/tls/ca.crt"
 	LDAPCAFile  = SecretsDir + "/ldap/ca.crt"
 
+	// CatalogConfigDir holds one properties file per Iceberg REST catalog and
+	// is passed to the coordinators as -catalog_config_dir. Impala loads
+	// every file in it, so it must not share a directory with the Hadoop XML.
+	CatalogConfigDir = "/opt/impala/catalogs"
+
 	// DefaultPoolName is Impala's built-in admission pool when no
 	// fair-scheduler configuration is present.
 	DefaultPoolName = "default-pool"
@@ -67,6 +72,14 @@ const (
 	// TLSSecretCAKey is the CA bundle key in a kubernetes.io/tls Secret.
 	TLSSecretCAKey = "ca.crt"
 )
+
+// CatalogdDeployed reports whether the cluster runs catalogd. It does so
+// exactly when a Hive Metastore is configured: catalogd needs HMS, and HMS
+// tables are only reachable through catalogd. Without both, the coordinators
+// serve metadata from the Iceberg REST catalogs alone.
+func CatalogdDeployed(c *impalav1alpha1.ImpalaCluster) bool {
+	return c.Spec.ClusterConfig.HiveMetastore != nil
+}
 
 // ConfigMapName returns the name of the shared configuration ConfigMap.
 func ConfigMapName(c *impalav1alpha1.ImpalaCluster) string { return c.Name + "-conf" }

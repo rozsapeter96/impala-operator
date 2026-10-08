@@ -57,7 +57,9 @@ spec:
             description: spec defines the desired state of ImpalaCluster
             properties:
               catalog:
-                description: CatalogSpec configures the catalog StatefulSet.
+                description: |-
+                  CatalogSpec configures the catalog StatefulSet. It is ignored when
+                  clusterConfig.hiveMetastore is unset, because catalogd is not deployed then.
                 properties:
                   args:
                     description: |-
@@ -283,8 +285,10 @@ spec:
                       "hdfs-site.xml").
                     type: object
                   hiveMetastore:
-                    description: HiveMetastoreSpec points Impala at an external Hive
-                      Metastore.
+                    description: |-
+                      hiveMetastore is the metastore catalogd serves. Omit it to run without
+                      catalogd and HMS, in which case icebergRestCatalogs must list at least
+                      one catalog and the coordinators read metadata from those only.
                     properties:
                       eventPollingIntervalSeconds:
                         default: 1
@@ -302,6 +306,100 @@ spec:
                     required:
                     - uris
                     type: object
+                  icebergRestCatalogs:
+                    description: |-
+                      icebergRestCatalogs lists Iceberg REST catalogs the coordinators query,
+                      alongside the Hive Metastore when one is configured. Tables are
+                      addressed by database and table name; a name present in several
+                      catalogs is rejected as ambiguous.
+                    items:
+                      description: |-
+                        IcebergRESTCatalogSpec connects the coordinators to one Iceberg REST
+                        catalog (Apache Polaris, Lakekeeper, Gravitino, Unity, ...). Each entry is
+                        rendered as a Java properties file under -catalog_config_dir. Requires an
+                        Impala build that includes IMPALA-13586 (master after 4.5).
+                      properties:
+                        name:
+                          description: |-
+                            name identifies the catalog. It is the properties file name and the
+                            value of iceberg.rest-catalog.name, which Impala needs to route INSERT
+                            INTO statements, so it must be unique within the cluster.
+                          maxLength: 63
+                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                          type: string
+                        oauth2:
+                          description: |-
+                            RESTCatalogOAuth2Spec authenticates to an Iceberg REST catalog with the
+                            OAuth2 client-credentials flow (iceberg.rest-catalog.security=OAUTH2).
+                          properties:
+                            credentialSecretRef:
+                              description: |-
+                                credentialSecretRef names a Secret key holding the OAuth2 client
+                                credential in Iceberg's "<client-id>:<client-secret>" form. The value is
+                                injected into the coordinator pods as an environment variable and
+                                referenced from the properties file with Impala's ${ENV:...}
+                                substitution, so it never lands in the ConfigMap. Rotating the Secret
+                                rolls the coordinators. The key defaults to "credential".
+                              properties:
+                                key:
+                                  default: credential
+                                  type: string
+                                name:
+                                  minLength: 1
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            scope:
+                              description: |-
+                                scope requested with the token (iceberg.rest-catalog.oauth2.scope).
+                                Apache Polaris expects "PRINCIPAL_ROLE:ALL" or a specific principal role.
+                              type: string
+                            serverURI:
+                              description: |-
+                                serverURI is the token endpoint (iceberg.rest-catalog.oauth2.server-uri).
+                                Defaults to the catalog's own "<uri>/v1/oauth/tokens" endpoint, which
+                                is what Apache Polaris serves.
+                              type: string
+                          required:
+                          - credentialSecretRef
+                          type: object
+                        prefix:
+                          description: prefix is passed as iceberg.rest-catalog.prefix.
+                          type: string
+                        properties:
+                          additionalProperties:
+                            type: string
+                          description: |-
+                            properties adds or overrides raw entries in the properties file, for
+                            example "io-impl" or Trino-style "iceberg.rest-catalog.*" keys. Impala
+                            resolves "${ENV:NAME}" references against the coordinator environment,
+                            so secrets can be supplied through coordinators.env.
+                          type: object
+                        uri:
+                          description: uri of the REST catalog endpoint, e.g. "http://polaris:8181/api/catalog".
+                          pattern: ^https?://.+
+                          type: string
+                        vendedCredentials:
+                          description: |-
+                            vendedCredentials asks the catalog for per-table storage credentials on
+                            loadTable (iceberg.rest-catalog.vended-credentials-enabled). Leave it
+                            off to read table data with the cluster's own storage credentials.
+                          type: boolean
+                        warehouse:
+                          description: |-
+                            warehouse is passed as iceberg.rest-catalog.warehouse. Polaris uses it
+                            to select the catalog by name; other servers take a storage location.
+                          type: string
+                      required:
+                      - name
+                      - uri
+                      type: object
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
                   kudu:
                     description: KuduSpec configures an optional Kudu integration.
                     properties:
@@ -526,9 +624,12 @@ spec:
                             type: string
                         type: object
                     type: object
-                required:
-                - hiveMetastore
                 type: object
+                x-kubernetes-validations:
+                - message: clusterConfig needs a hiveMetastore, one or more icebergRestCatalogs,
+                    or both
+                  rule: has(self.hiveMetastore) || (has(self.icebergRestCatalogs)
+                    && size(self.icebergRestCatalogs) > 0)
               coordinators:
                 description: CoordinatorSpec configures the coordinator StatefulSet.
                 properties:

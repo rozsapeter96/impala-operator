@@ -118,3 +118,13 @@ them (`automountServiceAccountToken: false`). Setting
 `podOverrides.serviceAccountName` mounts it again, on the assumption that a
 dedicated ServiceAccount exists to be used (cloud IAM bindings, Vault agents);
 `podOverrides.automountServiceAccountToken` overrides either default.
+
+## Iceberg REST catalog credentials
+
+`clusterConfig.icebergRestCatalogs[].oauth2.credentialSecretRef` names a
+Secret key holding the OAuth2 client credential (`<client-id>:<client-secret>`).
+The operator injects it into the coordinator container as an environment
+variable and references that variable from the catalog's properties file
+with Impala's `${ENV:...}` substitution, so the credential is never written
+to the ConfigMap. Executors do not receive it. Rotating the Secret rolls the
+coordinators. See [catalogs.md](catalogs.md).

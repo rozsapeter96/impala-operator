@@ -143,7 +143,14 @@ func (r *ImpalaClusterReconciler) reconcile(ctx context.Context, cluster *impala
 
 	progressing := false
 	blocked := ""
-	for _, tier := range []resources.Tier{desired.Statestore, desired.Catalog, desired.Coordinators} {
+	if desired.Catalog.StatefulSet == nil {
+		// hiveMetastore was removed: the cluster now runs on REST catalogs
+		// alone, so a catalogd left over from before must go.
+		if err := r.pruneCatalog(ctx, cluster); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	for _, tier := range desired.CoreTiers() {
 		ready, err := r.applyTier(ctx, cluster, tier)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -201,6 +208,32 @@ func (r *ImpalaClusterReconciler) reconcile(ctx context.Context, cluster *impala
 		setCondition(cluster, impalav1alpha1.ConditionReady, metav1.ConditionFalse, "ExecutorGroupsUnhealthy", "one or more executor groups are below minHealthySize")
 	}
 	return ctrl.Result{}, nil
+}
+
+// pruneCatalog deletes the catalog StatefulSet and Services of a cluster that
+// no longer deploys catalogd.
+func (r *ImpalaClusterReconciler) pruneCatalog(ctx context.Context, cluster *impalav1alpha1.ImpalaCluster) error {
+	name := resources.CatalogName(cluster)
+	objs := []client.Object{
+		&appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Namespace: cluster.Namespace, Name: name}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: cluster.Namespace, Name: name}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: cluster.Namespace, Name: resources.HeadlessName(name)}},
+	}
+	for _, obj := range objs {
+		if err := r.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return err
+		}
+		if !metav1.IsControlledBy(obj, cluster) {
+			continue
+		}
+		if err := r.Delete(ctx, obj); client.IgnoreNotFound(err) != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // reconcileNetworkPolicy applies the cluster's NetworkPolicy, or removes a
@@ -364,6 +397,10 @@ func (r *ImpalaClusterReconciler) updateStatus(ctx context.Context, cluster *imp
 }
 
 func (r *ImpalaClusterReconciler) componentStatus(ctx context.Context, desired *appsv1.StatefulSet) (impalav1alpha1.ComponentStatus, error) {
+	if desired == nil {
+		// The component is not deployed (catalogd without a Hive Metastore).
+		return impalav1alpha1.ComponentStatus{}, nil
+	}
 	live := &appsv1.StatefulSet{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(desired), live); err != nil {
 		if apierrors.IsNotFound(err) {

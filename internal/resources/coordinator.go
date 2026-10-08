@@ -43,12 +43,21 @@ func BuildCoordinators(c *impalav1alpha1.ImpalaCluster, configHash string) (*app
 		"-is_coordinator=true",
 		"-is_executor=false",
 		"-use_local_catalog=true",
-		"-catalog_service_host="+CatalogName(c),
-		fmt.Sprintf("-catalog_service_port=%d", PortCatalog),
 		fmt.Sprintf("-hs2_port=%d", PortHS2),
 		fmt.Sprintf("-hs2_http_port=%d", PortHS2HTTP),
 		fmt.Sprintf("-num_expected_executors=%d", maxExecutorGroupSize(c)),
 	)
+	if CatalogdDeployed(c) {
+		args = append(args,
+			"-catalog_service_host="+CatalogName(c),
+			fmt.Sprintf("-catalog_service_port=%d", PortCatalog),
+		)
+	}
+	// The local catalog loads every REST catalog from the properties files
+	// in this directory, next to (or instead of) the catalogd provider.
+	if len(c.Spec.ClusterConfig.IcebergRESTCatalogs) > 0 {
+		args = append(args, "-catalog_config_dir="+CatalogConfigDir)
+	}
 	if len(cfg.DefaultQueryOptions) > 0 {
 		args = append(args, "-default_query_options="+joinOptions(cfg.DefaultQueryOptions))
 	}
@@ -78,6 +87,9 @@ func BuildCoordinators(c *impalav1alpha1.ImpalaCluster, configHash string) (*app
 		spec:          c.Spec.Coordinators.ComponentSpec,
 		jvmHeap:       cfg.JVMHeap,
 		shutdown:      &cfg.ImpaladConfig,
+		extraEnv:      restCatalogEnv(c),
+		extraVolumes:  restCatalogVolumes(c),
+		extraMounts:   restCatalogMounts(c),
 		configHash:    configHash,
 		startupBudget: 90,
 	})
@@ -111,6 +123,11 @@ func impaladCommonArgs(c *impalav1alpha1.ImpalaCluster, cfg *impalav1alpha1.Impa
 		fmt.Sprintf("-krpc_port=%d", PortKRPC),
 		fmt.Sprintf("-state_store_subscriber_port=%d", PortSubscriber),
 		"-mem_limit_includes_jvm=true",
+	}
+	if !CatalogdDeployed(c) {
+		// Every impalad, executors included, must stop waiting for a catalog
+		// topic and polling catalog metrics when no catalogd exists.
+		args = append(args, "-catalogd_deployed=false")
 	}
 	if cfg.MemLimit != "" {
 		args = append(args, "-mem_limit="+cfg.MemLimit)

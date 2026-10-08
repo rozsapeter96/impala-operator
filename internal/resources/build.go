@@ -48,9 +48,21 @@ type Desired struct {
 	ConfigHash     string
 	NetworkPolicy  *networkingv1.NetworkPolicy // nil when isolation is disabled
 	Statestore     Tier
-	Catalog        Tier
+	Catalog        Tier // empty (nil StatefulSet) when catalogd is not deployed
 	Coordinators   Tier
 	ExecutorGroups []ExecutorGroupTier
+}
+
+// CoreTiers returns the non-executor tiers in rollout order, skipping the
+// catalog tier when catalogd is not deployed.
+func (d *Desired) CoreTiers() []Tier {
+	tiers := make([]Tier, 0, 3)
+	for _, t := range []Tier{d.Statestore, d.Catalog, d.Coordinators} {
+		if t.StatefulSet != nil {
+			tiers = append(tiers, t)
+		}
+	}
+	return tiers
 }
 
 // Build renders every managed object. groupCounts overrides the number of
@@ -73,8 +85,10 @@ func Build(c *impalav1alpha1.ImpalaCluster, groupCounts map[string]int32, extraH
 	sts, svcs := BuildStatestore(c, hash)
 	d.Statestore = Tier{Name: "statestore", StatefulSet: sts, Objects: toObjects(svcs)}
 
-	sts, svcs = BuildCatalog(c, hash)
-	d.Catalog = Tier{Name: "catalog", StatefulSet: sts, Objects: toObjects(svcs)}
+	if CatalogdDeployed(c) {
+		sts, svcs = BuildCatalog(c, hash)
+		d.Catalog = Tier{Name: "catalog", StatefulSet: sts, Objects: toObjects(svcs)}
+	}
 
 	sts, svcs = BuildCoordinators(c, hash)
 	coord := Tier{Name: "coordinators", StatefulSet: sts, Objects: toObjects(svcs)}
@@ -104,7 +118,7 @@ func (d *Desired) AllObjects() []client.Object {
 	if d.NetworkPolicy != nil {
 		objs = append(objs, d.NetworkPolicy)
 	}
-	for _, t := range []Tier{d.Statestore, d.Catalog, d.Coordinators} {
+	for _, t := range d.CoreTiers() {
 		objs = append(objs, t.Objects...)
 		objs = append(objs, t.StatefulSet)
 	}

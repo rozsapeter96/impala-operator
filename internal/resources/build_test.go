@@ -29,7 +29,10 @@ import (
 	impalav1alpha1 "github.com/rozsapeter96/impala-operator/api/v1alpha1"
 )
 
-const sampleName = "demo"
+const (
+	sampleName      = "demo"
+	argLocalCatalog = "-use_local_catalog=true"
+)
 
 func sampleCluster() *impalav1alpha1.ImpalaCluster {
 	return &impalav1alpha1.ImpalaCluster{
@@ -37,7 +40,7 @@ func sampleCluster() *impalav1alpha1.ImpalaCluster {
 		Spec: impalav1alpha1.ImpalaClusterSpec{
 			Image: impalav1alpha1.ImageSpec{Repository: "apache/impala", Version: "4.5.2"},
 			ClusterConfig: impalav1alpha1.ClusterConfig{
-				HiveMetastore: impalav1alpha1.HiveMetastoreSpec{URIs: "thrift://hms:9083"},
+				HiveMetastore: &impalav1alpha1.HiveMetastoreSpec{URIs: "thrift://hms:9083"},
 				Storage: impalav1alpha1.StorageSpec{S3: &impalav1alpha1.S3Spec{
 					Endpoint:             "http://minio:9000",
 					PathStyleAccess:      true,
@@ -163,7 +166,7 @@ func TestCoordinatorStatefulSet(t *testing.T) {
 		t.Errorf("image = %s", ctr.Image)
 	}
 	for _, want := range []string{
-		"-is_coordinator=true", "-is_executor=false", "-use_local_catalog=true",
+		"-is_coordinator=true", "-is_executor=false", argLocalCatalog,
 		"-state_store_host=demo-statestore", "-catalog_service_host=demo-catalog",
 		"-hostname=$(POD_NAME).demo-coordinator-hl.impala.svc.cluster.local",
 		"-use_resolved_hostname=false", "-mem_limit=4gb",
@@ -419,4 +422,161 @@ func portNumbers(ports []networkingv1.NetworkPolicyPort) []int32 {
 		out = append(out, p.Port.IntVal)
 	}
 	return out
+}
+
+func polarisCluster() *impalav1alpha1.ImpalaCluster {
+	c := sampleCluster()
+	c.Spec.ClusterConfig.IcebergRESTCatalogs = []impalav1alpha1.IcebergRESTCatalogSpec{{
+		Name:      "polaris",
+		URI:       "http://polaris:8181/api/catalog",
+		Warehouse: "lake",
+		OAuth2: &impalav1alpha1.RESTCatalogOAuth2Spec{
+			CredentialSecretRef: impalav1alpha1.SecretKeyReference{Name: "polaris-creds"},
+			Scope:               "PRINCIPAL_ROLE:ALL",
+		},
+		Properties: map[string]string{"io-impl": "org.apache.iceberg.hadoop.HadoopFileIO"},
+	}}
+	return c
+}
+
+func TestRESTCatalogAlongsideHMS(t *testing.T) {
+	c := polarisCluster()
+	cm := BuildConfigMap(c)
+	props := cm.Data["rest-catalog-polaris.properties"]
+	for _, want := range []string{
+		"connector.name=iceberg\n",
+		"iceberg.catalog.type=rest\n",
+		"iceberg.rest-catalog.name=polaris\n",
+		"iceberg.rest-catalog.uri=http://polaris:8181/api/catalog\n",
+		"iceberg.rest-catalog.warehouse=lake\n",
+		"iceberg.rest-catalog.security=OAUTH2\n",
+		"iceberg.rest-catalog.oauth2.credential=${ENV:IMPALA_REST_CATALOG_POLARIS_CREDENTIAL}\n",
+		"iceberg.rest-catalog.oauth2.scope=PRINCIPAL_ROLE:ALL\n",
+		"iceberg.rest-catalog.oauth2.server-uri=http://polaris:8181/api/catalog/v1/oauth/tokens\n",
+		"io-impl=org.apache.iceberg.hadoop.HadoopFileIO\n",
+	} {
+		if !strings.Contains(props, want) {
+			t.Errorf("properties missing %q:\n%s", want, props)
+		}
+	}
+	if strings.Contains(props, "vended-credentials") {
+		t.Errorf("vended credentials must be off by default:\n%s", props)
+	}
+	if !strings.Contains(cm.Data[FileHiveSite], "hive.metastore.uris") {
+		t.Errorf("HMS must still be configured in hybrid mode")
+	}
+
+	coord, _ := BuildCoordinators(c, "h")
+	pod := coord.Spec.Template.Spec
+	ctr := pod.Containers[0]
+	for _, want := range []string{"-catalog_config_dir=/opt/impala/catalogs", "-catalog_service_host=demo-catalog", argLocalCatalog} {
+		if !hasArg(ctr.Args, want) {
+			t.Errorf("missing arg %q in %v", want, ctr.Args)
+		}
+	}
+	if hasArg(ctr.Args, "-catalogd_deployed=false") {
+		t.Errorf("catalogd is deployed in hybrid mode")
+	}
+	var cred *corev1.EnvVar
+	for i := range ctr.Env {
+		if ctr.Env[i].Name == "IMPALA_REST_CATALOG_POLARIS_CREDENTIAL" {
+			cred = &ctr.Env[i]
+		}
+	}
+	if cred == nil || cred.ValueFrom == nil || cred.ValueFrom.SecretKeyRef == nil ||
+		cred.ValueFrom.SecretKeyRef.Name != "polaris-creds" || cred.ValueFrom.SecretKeyRef.Key != "credential" {
+		t.Errorf("credential env not injected from the Secret: %+v", cred)
+	}
+	var vol *corev1.Volume
+	for i := range pod.Volumes {
+		if pod.Volumes[i].Name == "catalogs" {
+			vol = &pod.Volumes[i]
+		}
+	}
+	if vol == nil || vol.ConfigMap == nil || vol.ConfigMap.Name != "demo-conf" ||
+		len(vol.ConfigMap.Items) != 1 || vol.ConfigMap.Items[0].Key != "rest-catalog-polaris.properties" || vol.ConfigMap.Items[0].Path != "polaris.properties" {
+		t.Errorf("catalog properties must be projected alone into the catalog dir: %+v", vol)
+	}
+	mounted := false
+	for _, m := range ctr.VolumeMounts {
+		if m.Name == "catalogs" && m.MountPath == CatalogConfigDir && m.ReadOnly {
+			mounted = true
+		}
+	}
+	if !mounted {
+		t.Errorf("catalog dir not mounted: %+v", ctr.VolumeMounts)
+	}
+}
+
+func TestRESTCatalogSecretsStayOnCoordinators(t *testing.T) {
+	c := polarisCluster()
+	if refs := ReferencedSecrets(c); !slices.Contains(refs, "polaris-creds") {
+		t.Errorf("OAuth2 credential Secret must roll pods on rotation: %v", refs)
+	}
+	exec := BuildExecutorGroup(c, &c.Spec.ExecutorGroups[0], 0, "h")
+	ectr := exec.Spec.Template.Spec.Containers[0]
+	if hasArg(ectr.Args, "-catalog_config_dir=/opt/impala/catalogs") {
+		t.Errorf("executors do not plan queries and must not get the catalog dir")
+	}
+	for _, e := range ectr.Env {
+		if e.Name == "IMPALA_REST_CATALOG_POLARIS_CREDENTIAL" {
+			t.Errorf("executors must not receive catalog credentials")
+		}
+	}
+}
+
+func TestRESTCatalogStandalone(t *testing.T) {
+	c := polarisCluster()
+	c.Spec.ClusterConfig.HiveMetastore = nil
+	c.Spec.Catalog.Replicas = new(int32(2))
+
+	d := Build(c, nil, "", "impala-operator-system")
+	if d.Catalog.StatefulSet != nil {
+		t.Fatalf("catalogd must not be deployed without a Hive Metastore")
+	}
+	if got := len(d.CoreTiers()); got != 2 {
+		t.Errorf("expected statestore and coordinators only, got %d tiers", got)
+	}
+	for _, o := range d.AllObjects() {
+		if o == nil {
+			t.Fatalf("AllObjects returned a nil object")
+		}
+		if strings.HasPrefix(o.GetName(), "demo-catalog") {
+			t.Errorf("unexpected catalog object %s", o.GetName())
+		}
+	}
+	if strings.Contains(d.ConfigMap.Data[FileHiveSite], "hive.metastore.uris") {
+		t.Errorf("hive-site must not point at a metastore:\n%s", d.ConfigMap.Data[FileHiveSite])
+	}
+
+	ctr := d.Coordinators.StatefulSet.Spec.Template.Spec.Containers[0]
+	for _, want := range []string{"-catalogd_deployed=false", argLocalCatalog, "-catalog_config_dir=/opt/impala/catalogs"} {
+		if !hasArg(ctr.Args, want) {
+			t.Errorf("missing arg %q in %v", want, ctr.Args)
+		}
+	}
+	for _, a := range ctr.Args {
+		if strings.HasPrefix(a, "-catalog_service_host=") {
+			t.Errorf("no catalog service to point at: %s", a)
+		}
+	}
+	ectr := d.ExecutorGroups[0].Instances[0].StatefulSet.Spec.Template.Spec.Containers[0]
+	if !hasArg(ectr.Args, "-catalogd_deployed=false") {
+		t.Errorf("executors must also learn that no catalogd exists: %v", ectr.Args)
+	}
+	ss := d.Statestore.StatefulSet.Spec.Template.Spec.Containers[0]
+	if hasArg(ss.Args, "-enable_catalogd_ha=true") {
+		t.Errorf("catalog HA flag is meaningless without catalogd")
+	}
+}
+
+func TestJavaProperties(t *testing.T) {
+	got := javaProperties(map[string]string{
+		"b key=1": " v:1\\x\n",
+		"a":       "",
+	})
+	want := "a=\nb\\ key\\=1=\\ v:1\\\\x\\n\n"
+	if got != want {
+		t.Errorf("javaProperties =\n%q\nwant\n%q", got, want)
+	}
 }

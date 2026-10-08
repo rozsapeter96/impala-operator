@@ -47,7 +47,7 @@ func autoscaledCluster() *impalav1alpha1.ImpalaCluster {
 	return &impalav1alpha1.ImpalaCluster{
 		ObjectMeta: metav1.ObjectMeta{Name: "as", Namespace: "default", Generation: 1},
 		Spec: impalav1alpha1.ImpalaClusterSpec{
-			ClusterConfig: impalav1alpha1.ClusterConfig{HiveMetastore: impalav1alpha1.HiveMetastoreSpec{URIs: "thrift://hms:9083"}},
+			ClusterConfig: impalav1alpha1.ClusterConfig{HiveMetastore: &impalav1alpha1.HiveMetastoreSpec{URIs: "thrift://hms:9083"}},
 			ExecutorGroups: []impalav1alpha1.ExecutorGroupSpec{{
 				Name:   "small",
 				Size:   1,

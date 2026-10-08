@@ -52,10 +52,14 @@ controllers run in the same manager process:
 Every managed object comes from a builder here. The important ones:
 
 - `BuildConfigMap` renders the Hadoop-style XML files (`hive-site.xml`,
-  `core-site.xml`, `fair-scheduler.xml`, `llama-site.xml`) and returns a
-  ConfigMap. `ConfigHash` produces a stable SHA-256 of its contents.
+  `core-site.xml`, `fair-scheduler.xml`, `llama-site.xml`) and one
+  `rest-catalog-<name>.properties` per Iceberg REST catalog
+  (`restcatalog.go`), and returns a ConfigMap. `ConfigHash` produces a
+  stable SHA-256 of its contents.
 - `BuildStatestore`, `BuildCatalog`, `BuildCoordinators` each return a
-  StatefulSet plus its headless and client Services.
+  StatefulSet plus its headless and client Services. `BuildCatalog` is only
+  called when `CatalogdDeployed` (a Hive Metastore is configured); otherwise
+  `Desired.Catalog` stays empty and `CoreTiers()` skips it.
 - `BuildExecutorGroup` returns the StatefulSet for one group instance;
   `BuildExecutorGroupHeadlessService` returns the Service shared by a family.
 - `BuildPDB` returns a `maxUnavailable: 1` PodDisruptionBudget.
@@ -71,9 +75,9 @@ centralises labels and selectors.
 
 ## The ImpalaCluster resource
 
-Spec is grouped by component: `image`, `clusterConfig` (HMS, storage,
-admission control, security, overrides), `statestore`, `catalog`,
-`coordinators`, and a list of `executorGroups`. Status reports
+Spec is grouped by component: `image`, `clusterConfig` (HMS, Iceberg REST
+catalogs, storage, admission control, security, overrides), `statestore`,
+`catalog`, `coordinators`, and a list of `executorGroups`. Status reports
 `observedGeneration`, conditions, per-component replica counts, per-family
 executor group health, and the client endpoints.
 
@@ -89,7 +93,9 @@ Three conditions are reported, following Kubernetes conventions and set with
 Validation is done entirely with CRD markers and CEL `x-kubernetes-validations`
 rules, so there are no admission webhooks and no cert-manager dependency. CEL
 rules enforce that every `executorGroup.pool` names a configured pool, that
-`minHealthySize <= size`, and that `minGroups <= maxGroups`. Rules are guarded
+`minHealthySize <= size`, that `minGroups <= maxGroups`, and that
+`clusterConfig` has a `hiveMetastore`, an `icebergRestCatalogs` entry, or
+both. Rules are guarded
 with `has()` for optional fields, and lists carry `maxItems` so the API
 server's CEL cost budget is satisfied.
 
@@ -126,13 +132,15 @@ only onto groups named `root.<pool>-...`.
 1. **Fetch** the CR. If it is being deleted, return (owner references garbage
    collect the children; there is no finalizer).
 2. **Hash referenced data.** Read every referenced Secret and user ConfigMap
-   (S3 credentials, TLS cert, keytab, krb5.conf) and fold their contents into a
-   digest. A missing reference sets `Degraded` and stops.
+   (S3 credentials, TLS cert, keytab, krb5.conf, REST catalog OAuth2
+   credentials) and fold their contents into a digest. A missing reference
+   sets `Degraded` and stops.
 3. **Render** the full desired state with `resources.Build`, passing the
    autoscaler's target group counts and the referenced-data digest. The digest
    is mixed into the config hash, so rotating a Secret changes the hash.
 4. **Apply the ConfigMap** and the NetworkPolicy (or delete a stale one),
-   then apply each tier in order.
+   then apply each tier in order. When no catalogd is desired, a catalog
+   StatefulSet and Services left over from an earlier spec are deleted first.
 5. **Gate on readiness** (see below).
 6. **Prune** executor group StatefulSets, PDBs and Services that are no longer
    desired (label-selected and owner-checked).
@@ -151,8 +159,8 @@ values.
 
 ### Rollout ordering
 
-Objects are applied in dependency order: statestore, catalog, coordinators,
-then executor groups. After each of the first three tiers the reconciler
+Objects are applied in dependency order: statestore, catalog (when
+deployed), coordinators, then executor groups. After each of the first three tiers the reconciler
 checks whether the StatefulSet has converged (`statefulSetReady`: observed
 generation current, update revision equals current revision, updated and ready
 replicas equal the desired count). If a tier is not ready, later tiers are not
@@ -195,6 +203,10 @@ The shared pod template applies to every daemon:
   restricted Pod Security Standard.
 - `/opt/impala/conf` mounted read-only from the ConfigMap; `/opt/impala/logs`
   an emptyDir; TLS, keytab and LDAP CA projected under `/opt/impala/secrets`.
+  Coordinators additionally get the REST catalog properties files projected
+  alone into `/opt/impala/catalogs` (Impala loads every file in that
+  directory) and the OAuth2 credentials as Secret-backed environment
+  variables.
 - `JAVA_TOOL_OPTIONS=-Xmx<jvmHeap>` sets the embedded JVM heap.
 - Readiness, liveness and startup probes hit `/healthz` on the daemon's web
   port; the scheme switches to HTTPS when TLS is enabled. Impala's `/healthz`
@@ -212,9 +224,11 @@ The shared pod template applies to every daemon:
 ### Daemon flags
 
 Flags are assembled per component. Common impalad flags set the statestore
-host, KRPC and subscriber ports, and `-mem_limit`. Coordinators add
-`-is_executor=false -use_local_catalog=true`, the catalog host, HS2 ports, the
-admission-control config paths, and `-num_expected_executors`. Executors add
+host, KRPC and subscriber ports, `-mem_limit`, and `-catalogd_deployed=false`
+when no Hive Metastore is configured. Coordinators add
+`-is_executor=false -use_local_catalog=true`, the catalog host (when catalogd
+is deployed), `-catalog_config_dir` (when REST catalogs are configured), HS2
+ports, the admission-control config paths, and `-num_expected_executors`. Executors add
 `-is_coordinator=false`, their `-executor_groups` registration and
 `-scratch_dirs`/`-data_cache`. Catalog with two replicas and its statestore
 both get `-enable_catalogd_ha=true`.
@@ -330,7 +344,10 @@ has marked the highest-index instance `healthy` in status.
   cycle on a family that starts at zero groups (cold start on "Waiting for
   executors to start", a second group on "Not enough admission control
   slots", then removal of both once idle), and that a queue caused by the
-  pool running-query cap does *not* add a group. Because Ginkgo shuffles
+  pool running-query cap does *not* add a group. It then replaces that
+  cluster with a catalogd-less one built from Impala master that reads an
+  Apache Polaris catalog (in-memory Polaris, table metadata on the same
+  MinIO bucket) and checks `INSERT INTO` and `SELECT` through it. Because Ginkgo shuffles
   top-level suites, the Impala suite deploys the operator itself (with a
   rollout restart, since the image tag is fixed) and undeploys afterward.
 
@@ -353,6 +370,9 @@ e2e on every push.
   scope for v1.
 - **TLS, Kerberos and LDAP are unit-tested only**; there is no CA, KDC or
   LDAP e2e fixture.
+- **Iceberg REST catalogs need Impala `master`** (IMPALA-13586). The official
+  4.5.x images lack the flags, so the e2e suite runs that scenario on
+  `prozsa/impala` images built from master, against Apache Polaris.
 - **`executorGroups[].config.scratch` and `.dataCache` are immutable** once
   the family exists, enforced by CEL, because they become StatefulSet
   `volumeClaimTemplates`, which Kubernetes does not allow to change. To

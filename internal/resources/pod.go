@@ -62,6 +62,7 @@ type daemon struct {
 	jvmHeap       string
 	shutdown      *impalav1alpha1.ImpaladConfig // nil for statestore/catalog
 	claims        []corev1.PersistentVolumeClaim
+	extraEnv      []corev1.EnvVar
 	extraVolumes  []corev1.Volume
 	extraMounts   []corev1.VolumeMount
 	configHash    string
@@ -104,6 +105,7 @@ func buildStatefulSet(c *impalav1alpha1.ImpalaCluster, d daemon) *appsv1.Statefu
 	if KerberosEnabled(c) && c.Spec.ClusterConfig.Security.Kerberos.Krb5ConfigMapRef != nil {
 		env = append(env, corev1.EnvVar{Name: "KRB5_CONFIG", Value: Krb5File})
 	}
+	env = append(env, d.extraEnv...)
 	env = append(env, d.spec.Env...)
 
 	var envFrom []corev1.EnvFromSource

@@ -1,0 +1,46 @@
+# An Impala cluster that reads metadata from an Apache Polaris catalog and
+# runs without catalogd or a Hive Metastore. Needs Impala images built from
+# master (IMPALA-13586); see doc/catalogs.md.
+apiVersion: impala.operator.dev/v1alpha1
+kind: ImpalaCluster
+metadata:
+  labels:
+    app.kubernetes.io/name: impala-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: impalacluster-polaris
+spec:
+  image:
+    repository: registry.example.com/impala
+    version: master
+  clusterConfig:
+    icebergRestCatalogs:
+      - name: polaris
+        uri: http://polaris.polaris.svc:8181/api/catalog
+        warehouse: lake
+        oauth2:
+          credentialSecretRef:
+            name: polaris-impala   # key "credential": <client-id>:<client-secret>
+          scope: PRINCIPAL_ROLE:ALL
+        properties:
+          io-impl: org.apache.iceberg.hadoop.HadoopFileIO
+    storage:
+      s3:
+        endpoint: http://minio:9000
+        pathStyleAccess: true
+        credentialsSecretRef:
+          name: impala-s3-credentials
+  coordinators:
+    replicas: 1
+    config:
+      memLimit: 2gb
+      jvmHeap: 1g
+    resources:
+      requests: {cpu: "1", memory: 3Gi}
+  executorGroups:
+    - name: small
+      size: 2
+      config:
+        memLimit: 2gb
+        jvmHeap: 512m
+      resources:
+        requests: {cpu: "1", memory: 3Gi}

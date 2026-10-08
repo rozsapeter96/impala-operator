@@ -13,8 +13,9 @@ groups that can be added and removed independently. The operator owns
 deployment, configuration, scaling, upgrades, graceful shutdown, security
 wiring (TLS, Kerberos, LDAP) and executor group autoscaling.
 
-The Hive Metastore and the object store are external dependencies. The
-operator configures Impala to use them but does not run either.
+The Hive Metastore, Iceberg REST catalogs and the object store are external
+dependencies. The operator configures Impala to use them but does not run
+any of them.
 
 ## Decisions
 
@@ -67,6 +68,16 @@ group once it has been healthy and idle. Pool-level caps also queue queries
 but more groups cannot help, so those reasons are ignored. Decisions go to
 status, never to the spec.
 
+**Iceberg REST catalogs through Impala's own mechanism.** Impala `master`
+reads REST catalogs from properties files in `-catalog_config_dir`, next to
+or instead of catalogd. The operator renders those files from
+`clusterConfig.icebergRestCatalogs` rather than inventing its own
+abstraction, and ties the two deployment modes to one knob: catalogd is
+deployed exactly when `hiveMetastore` is set, because catalogd needs HMS and
+HMS tables are only reachable through catalogd. OAuth2 credentials reach the
+file through Impala's `${ENV:...}` substitution from a Secret-backed
+environment variable, so the ConfigMap never holds them.
+
 **Secrets are referenced, never copied.** Credentials, certificates and
 keytabs are mounted or injected from Secrets in the cluster's namespace.
 Nothing secret is written into the generated ConfigMap.
@@ -98,6 +109,13 @@ Verified against the `apache/impala` images and source:
   `/admission`. The autoscaler therefore scrapes the main web port over
   HTTPS when TLS is on.
 - Catalog HA is active/standby (`-enable_catalogd_ha`, two replicas).
+- `-catalog_config_dir` (IMPALA-13586, `master` only) loads every file in
+  the directory as a REST catalog and requires `connector.name=iceberg` and
+  `iceberg.catalog.type=rest` in each, so the properties files get their own
+  mount. `-catalogd_deployed=false` makes impalad skip the catalog topic and
+  catalog metrics; with `-use_local_catalog=true` the frontend then serves
+  metadata from the REST catalogs alone. `${ENV:NAME}` in a property value
+  is resolved from the process environment at startup.
 
 ## Out of scope for v1
 

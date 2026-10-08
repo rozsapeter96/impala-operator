@@ -58,7 +58,10 @@ type ImageSpec struct {
 	PullSecrets []corev1.LocalObjectReference `json:"pullSecrets,omitempty"`
 }
 
-// HiveMetastoreSpec points Impala at an external Hive Metastore.
+// HiveMetastoreSpec points Impala at an external Hive Metastore. The
+// operator deploys catalogd only when a metastore is configured; without one
+// the coordinators serve metadata straight from the Iceberg REST catalogs in
+// clusterConfig.icebergRestCatalogs.
 type HiveMetastoreSpec struct {
 	// uris is the value of hive.metastore.uris, e.g. "thrift://hms.default.svc:9083".
 	// +kubebuilder:validation:MinLength=1
@@ -71,6 +74,84 @@ type HiveMetastoreSpec struct {
 	// +kubebuilder:validation:Minimum=0
 	// +optional
 	EventPollingIntervalSeconds *int32 `json:"eventPollingIntervalSeconds,omitempty"`
+}
+
+// SecretKeyReference selects one key of a Secret in the cluster's namespace.
+type SecretKeyReference struct {
+	// +kubebuilder:validation:MinLength=1
+	// +required
+	Name string `json:"name"`
+	// +kubebuilder:default=credential
+	// +optional
+	Key string `json:"key,omitempty"`
+}
+
+// RESTCatalogOAuth2Spec authenticates to an Iceberg REST catalog with the
+// OAuth2 client-credentials flow (iceberg.rest-catalog.security=OAUTH2).
+type RESTCatalogOAuth2Spec struct {
+	// credentialSecretRef names a Secret key holding the OAuth2 client
+	// credential in Iceberg's "<client-id>:<client-secret>" form. The value is
+	// injected into the coordinator pods as an environment variable and
+	// referenced from the properties file with Impala's ${ENV:...}
+	// substitution, so it never lands in the ConfigMap. Rotating the Secret
+	// rolls the coordinators. The key defaults to "credential".
+	// +required
+	CredentialSecretRef SecretKeyReference `json:"credentialSecretRef"`
+
+	// serverURI is the token endpoint (iceberg.rest-catalog.oauth2.server-uri).
+	// Defaults to the catalog's own "<uri>/v1/oauth/tokens" endpoint, which
+	// is what Apache Polaris serves.
+	// +optional
+	ServerURI string `json:"serverURI,omitempty"`
+
+	// scope requested with the token (iceberg.rest-catalog.oauth2.scope).
+	// Apache Polaris expects "PRINCIPAL_ROLE:ALL" or a specific principal role.
+	// +optional
+	Scope string `json:"scope,omitempty"`
+}
+
+// IcebergRESTCatalogSpec connects the coordinators to one Iceberg REST
+// catalog (Apache Polaris, Lakekeeper, Gravitino, Unity, ...). Each entry is
+// rendered as a Java properties file under -catalog_config_dir. Requires an
+// Impala build that includes IMPALA-13586 (master after 4.5).
+type IcebergRESTCatalogSpec struct {
+	// name identifies the catalog. It is the properties file name and the
+	// value of iceberg.rest-catalog.name, which Impala needs to route INSERT
+	// INTO statements, so it must be unique within the cluster.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	// +required
+	Name string `json:"name"`
+
+	// uri of the REST catalog endpoint, e.g. "http://polaris:8181/api/catalog".
+	// +kubebuilder:validation:Pattern=`^https?://.+`
+	// +required
+	URI string `json:"uri"`
+
+	// warehouse is passed as iceberg.rest-catalog.warehouse. Polaris uses it
+	// to select the catalog by name; other servers take a storage location.
+	// +optional
+	Warehouse string `json:"warehouse,omitempty"`
+
+	// prefix is passed as iceberg.rest-catalog.prefix.
+	// +optional
+	Prefix string `json:"prefix,omitempty"`
+
+	// +optional
+	OAuth2 *RESTCatalogOAuth2Spec `json:"oauth2,omitempty"`
+
+	// vendedCredentials asks the catalog for per-table storage credentials on
+	// loadTable (iceberg.rest-catalog.vended-credentials-enabled). Leave it
+	// off to read table data with the cluster's own storage credentials.
+	// +optional
+	VendedCredentials bool `json:"vendedCredentials,omitempty"`
+
+	// properties adds or overrides raw entries in the properties file, for
+	// example "io-impl" or Trino-style "iceberg.rest-catalog.*" keys. Impala
+	// resolves "${ENV:NAME}" references against the coordinator environment,
+	// so secrets can be supplied through coordinators.env.
+	// +optional
+	Properties map[string]string `json:"properties,omitempty"`
 }
 
 // S3Spec configures S3A access for table data.
@@ -297,9 +378,23 @@ type LoggingSpec struct {
 }
 
 // ClusterConfig holds settings shared by every daemon.
+// +kubebuilder:validation:XValidation:rule="has(self.hiveMetastore) || (has(self.icebergRestCatalogs) && size(self.icebergRestCatalogs) > 0)",message="clusterConfig needs a hiveMetastore, one or more icebergRestCatalogs, or both"
 type ClusterConfig struct {
-	// +required
-	HiveMetastore HiveMetastoreSpec `json:"hiveMetastore"`
+	// hiveMetastore is the metastore catalogd serves. Omit it to run without
+	// catalogd and HMS, in which case icebergRestCatalogs must list at least
+	// one catalog and the coordinators read metadata from those only.
+	// +optional
+	HiveMetastore *HiveMetastoreSpec `json:"hiveMetastore,omitempty"`
+
+	// icebergRestCatalogs lists Iceberg REST catalogs the coordinators query,
+	// alongside the Hive Metastore when one is configured. Tables are
+	// addressed by database and table name; a name present in several
+	// catalogs is rejected as ambiguous.
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=16
+	// +optional
+	IcebergRESTCatalogs []IcebergRESTCatalogSpec `json:"icebergRestCatalogs,omitempty"`
 
 	// +optional
 	Storage StorageSpec `json:"storage,omitzero"`
@@ -429,7 +524,8 @@ type CatalogConfig struct {
 	CatalogTopicMode string `json:"catalogTopicMode,omitempty"`
 }
 
-// CatalogSpec configures the catalog StatefulSet.
+// CatalogSpec configures the catalog StatefulSet. It is ignored when
+// clusterConfig.hiveMetastore is unset, because catalogd is not deployed then.
 type CatalogSpec struct {
 	ComponentSpec `json:",inline"`
 

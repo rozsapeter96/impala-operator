@@ -1,0 +1,42 @@
+# A cluster without catalogd or a Hive Metastore, reading metadata from the
+# Polaris catalog in polaris.yaml. Needs Impala images built from master.
+apiVersion: impala.operator.dev/v1alpha1
+kind: ImpalaCluster
+metadata:
+  name: rest
+spec:
+  image:
+    repository: prozsa/impala
+    version: baf1e8fe93
+  clusterConfig:
+    icebergRestCatalogs:
+      - name: polaris
+        uri: http://polaris:8181/api/catalog
+        warehouse: lake
+        oauth2:
+          credentialSecretRef: {name: polaris-impala}
+          scope: PRINCIPAL_ROLE:ALL
+        properties:
+          io-impl: org.apache.iceberg.hadoop.HadoopFileIO
+    storage:
+      s3:
+        endpoint: http://minio:9000
+        pathStyleAccess: true
+        credentialsSecretRef:
+          name: impala-s3-credentials
+  statestore:
+    config: {jvmHeap: 256m}
+  coordinators:
+    replicas: 1
+    config:
+      memLimit: 1500mb
+      jvmHeap: 768m
+      gracefulShutdownDeadlineSeconds: 120
+  executorGroups:
+    - name: small
+      size: 1
+      groups: 1
+      config:
+        memLimit: 1500mb
+        jvmHeap: 384m
+        gracefulShutdownDeadlineSeconds: 120

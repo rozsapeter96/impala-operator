@@ -73,7 +73,8 @@ _Appears in:_
 
 
 
-CatalogSpec configures the catalog StatefulSet.
+CatalogSpec configures the catalog StatefulSet. It is ignored when
+clusterConfig.hiveMetastore is unset, because catalogd is not deployed then.
 
 
 
@@ -103,7 +104,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `hiveMetastore` _[HiveMetastoreSpec](#hivemetastorespec)_ |  |  |  |
+| `hiveMetastore` _[HiveMetastoreSpec](#hivemetastorespec)_ | hiveMetastore is the metastore catalogd serves. Omit it to run without<br />catalogd and HMS, in which case icebergRestCatalogs must list at least<br />one catalog and the coordinators read metadata from those only. |  |  |
+| `icebergRestCatalogs` _[IcebergRESTCatalogSpec](#icebergrestcatalogspec) array_ | icebergRestCatalogs lists Iceberg REST catalogs the coordinators query,<br />alongside the Hive Metastore when one is configured. Tables are<br />addressed by database and table name; a name present in several<br />catalogs is rejected as ambiguous. |  | MaxItems: 16 <br /> |
 | `storage` _[StorageSpec](#storagespec)_ |  |  |  |
 | `kudu` _[KuduSpec](#kuduspec)_ |  |  |  |
 | `admissionControl` _[AdmissionControlSpec](#admissioncontrolspec)_ |  |  |  |
@@ -322,7 +324,10 @@ _Appears in:_
 
 
 
-HiveMetastoreSpec points Impala at an external Hive Metastore.
+HiveMetastoreSpec points Impala at an external Hive Metastore. The
+operator deploys catalogd only when a metastore is configured; without one
+the coordinators serve metadata straight from the Iceberg REST catalogs in
+clusterConfig.icebergRestCatalogs.
 
 
 
@@ -333,6 +338,31 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `uris` _string_ | uris is the value of hive.metastore.uris, e.g. "thrift://hms.default.svc:9083". |  | MinLength: 1 <br /> |
 | `eventPollingIntervalSeconds` _integer_ | eventPollingIntervalSeconds sets -hms_event_polling_interval_s on catalogd.<br />0 disables HMS event processing. | 1 | Minimum: 0 <br /> |
+
+
+#### IcebergRESTCatalogSpec
+
+
+
+IcebergRESTCatalogSpec connects the coordinators to one Iceberg REST
+catalog (Apache Polaris, Lakekeeper, Gravitino, Unity, ...). Each entry is
+rendered as a Java properties file under -catalog_config_dir. Requires an
+Impala build that includes IMPALA-13586 (master after 4.5).
+
+
+
+_Appears in:_
+- [ClusterConfig](#clusterconfig)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | name identifies the catalog. It is the properties file name and the<br />value of iceberg.rest-catalog.name, which Impala needs to route INSERT<br />INTO statements, so it must be unique within the cluster. |  | MaxLength: 63 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` <br /> |
+| `uri` _string_ | uri of the REST catalog endpoint, e.g. "http://polaris:8181/api/catalog". |  | Pattern: `^https?://.+` <br /> |
+| `warehouse` _string_ | warehouse is passed as iceberg.rest-catalog.warehouse. Polaris uses it<br />to select the catalog by name; other servers take a storage location. |  |  |
+| `prefix` _string_ | prefix is passed as iceberg.rest-catalog.prefix. |  |  |
+| `oauth2` _[RESTCatalogOAuth2Spec](#restcatalogoauth2spec)_ |  |  |  |
+| `vendedCredentials` _boolean_ | vendedCredentials asks the catalog for per-table storage credentials on<br />loadTable (iceberg.rest-catalog.vended-credentials-enabled). Leave it<br />off to read table data with the cluster's own storage credentials. |  |  |
+| `properties` _object (keys:string, values:string)_ | properties adds or overrides raw entries in the properties file, for<br />example "io-impl" or Trino-style "iceberg.rest-catalog.*" keys. Impala<br />resolves "$\{ENV:NAME\}" references against the coordinator environment,<br />so secrets can be supplied through coordinators.env. |  |  |
 
 
 #### ImageSpec
@@ -595,6 +625,25 @@ _Appears in:_
 | `defaultQueryOptions` _object (keys:string, values:string)_ | defaultQueryOptions applied to every query in the pool. |  |  |
 
 
+#### RESTCatalogOAuth2Spec
+
+
+
+RESTCatalogOAuth2Spec authenticates to an Iceberg REST catalog with the
+OAuth2 client-credentials flow (iceberg.rest-catalog.security=OAUTH2).
+
+
+
+_Appears in:_
+- [IcebergRESTCatalogSpec](#icebergrestcatalogspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `credentialSecretRef` _[SecretKeyReference](#secretkeyreference)_ | credentialSecretRef names a Secret key holding the OAuth2 client<br />credential in Iceberg's "<client-id>:<client-secret>" form. The value is<br />injected into the coordinator pods as an environment variable and<br />referenced from the properties file with Impala's $\{ENV:...\}<br />substitution, so it never lands in the ConfigMap. Rotating the Secret<br />rolls the coordinators. The key defaults to "credential". |  |  |
+| `serverURI` _string_ | serverURI is the token endpoint (iceberg.rest-catalog.oauth2.server-uri).<br />Defaults to the catalog's own "<uri>/v1/oauth/tokens" endpoint, which<br />is what Apache Polaris serves. |  |  |
+| `scope` _string_ | scope requested with the token (iceberg.rest-catalog.oauth2.scope).<br />Apache Polaris expects "PRINCIPAL_ROLE:ALL" or a specific principal role. |  |  |
+
+
 #### S3Spec
 
 
@@ -612,6 +661,23 @@ _Appears in:_
 | `region` _string_ | region sets fs.s3a.endpoint.region. |  |  |
 | `pathStyleAccess` _boolean_ | pathStyleAccess sets fs.s3a.path.style.access, required by MinIO and most on-prem stores. |  |  |
 | `credentialsSecretRef` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.37/#localobjectreference-v1-core)_ | credentialsSecretRef names a Secret with keys AWS_ACCESS_KEY_ID and<br />AWS_SECRET_ACCESS_KEY (optionally AWS_SESSION_TOKEN). They are injected as<br />environment variables. Omit to rely on IAM roles / IRSA. |  |  |
+
+
+#### SecretKeyReference
+
+
+
+SecretKeyReference selects one key of a Secret in the cluster's namespace.
+
+
+
+_Appears in:_
+- [RESTCatalogOAuth2Spec](#restcatalogoauth2spec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ |  |  | MinLength: 1 <br /> |
+| `key` _string_ |  | credential |  |
 
 
 #### SecuritySpec

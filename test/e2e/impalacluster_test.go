@@ -36,14 +36,24 @@ const (
 	clusterName      = "e2e"
 	clientPod        = "impala-client"
 	impalaVersion    = "4.5.2"
-	coordinatorAddr  = clusterName + "-coordinator:21050"
-	envTrue          = "true"
+	// impalaMasterVersion tags prozsa/impala images built from Impala master.
+	impalaMasterVersion = "baf1e8fe93"
+	restClusterName     = "rest"
+	coordinatorAddr     = clusterName + "-coordinator:21050"
+	envTrue             = "true"
 )
 
 // impalaImages are pre-loaded into kind so that the test does not depend on
 // pulling multi-gigabyte images inside the cluster.
 var impalaImages = []string{
 	"apache/impala:" + impalaVersion + "-statestored",
+	// Iceberg REST catalog support is in Impala master only; these are
+	// master builds (statestored, coordinator and executor; no catalogd runs
+	// in that cluster).
+	"prozsa/impala:" + impalaMasterVersion + "-statestored",
+	"prozsa/impala:" + impalaMasterVersion + "-impalad_coordinator",
+	"prozsa/impala:" + impalaMasterVersion + "-impalad_executor",
+	"apache/polaris:1.8.0",
 	"apache/impala:" + impalaVersion + "-catalogd",
 	"apache/impala:" + impalaVersion + "-impalad_coordinator",
 	"apache/impala:" + impalaVersion + "-impalad_executor",
@@ -66,7 +76,12 @@ func impalaShell(query string) (string, error) {
 
 // impalaShellInPool is impalaShell with REQUEST_POOL set (empty = default pool).
 func impalaShellInPool(pool, query string) (string, error) {
-	args := []string{"exec", clientPod, "--", "impala-shell", "-i", coordinatorAddr, "-B", "--quiet",
+	return impalaShellAt(coordinatorAddr, pool, query)
+}
+
+// impalaShellAt runs a query against the given coordinator address.
+func impalaShellAt(addr, pool, query string) (string, error) {
+	args := []string{"exec", clientPod, "--", "impala-shell", "-i", addr, "-B", "--quiet",
 		"--query_option=EXEC_SINGLE_NODE_ROWS_THRESHOLD=0"}
 	if pool != "" {
 		args = append(args, "--query_option=REQUEST_POOL="+pool)
@@ -80,7 +95,11 @@ func statefulSetExists(name string) bool {
 }
 
 func clusterCondition(condType string) string {
-	out, err := kubectl("get", "impalacluster", clusterName, "-o",
+	return clusterConditionOf(clusterName, condType)
+}
+
+func clusterConditionOf(name, condType string) string {
+	out, err := kubectl("get", "impalacluster", name, "-o",
 		fmt.Sprintf(`jsonpath={.status.conditions[?(@.type=="%s")].status}`, condType))
 	if err != nil {
 		return ""
@@ -151,7 +170,8 @@ var _ = Describe("ImpalaCluster", Ordered, func() {
 				"deployment/impala-operator-controller-manager", "--tail=200"))
 			_, _ = fmt.Fprintln(GinkgoWriter, out)
 			for _, pod := range []string{clusterName + "-statestore-0", clusterName + "-catalog-0",
-				clusterName + "-coordinator-0", clusterName + "-exec-small-0-0"} {
+				clusterName + "-coordinator-0", clusterName + "-exec-small-0-0",
+				restClusterName + "-coordinator-0", restClusterName + "-exec-small-0-0", "deployment/polaris", "job/polaris-setup"} {
 				out, _ = kubectl("logs", pod, "--tail=60")
 				_, _ = fmt.Fprintf(GinkgoWriter, "--- %s ---\n%s\n", pod, out)
 			}
@@ -304,5 +324,51 @@ var _ = Describe("ImpalaCluster", Ordered, func() {
 		for range 2 {
 			Expect((<-results).err).NotTo(HaveOccurred())
 		}
+	})
+	It("serves an Apache Polaris REST catalog without catalogd", func() {
+		// The kind node cannot host two Impala clusters, so the HMS-backed one
+		// makes room for a master-build cluster that has no catalogd and no
+		// metastore: its coordinator reads the "lake" catalog from Polaris,
+		// which stores metadata on the same MinIO bucket. The setup Job in
+		// polaris.yaml creates an empty Iceberg table; Impala writes it with
+		// INSERT INTO (routed by the catalog name) and reads it back.
+		By("replacing the HMS cluster with Polaris and a standalone REST cluster")
+		_, err := kubectl("delete", "impalacluster", clusterName, "--wait=true", "--ignore-not-found")
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func() (string, error) {
+			return kubectl("get", "pods", "-l", "app.kubernetes.io/instance="+clusterName, "-o", "name")
+		}, 5*time.Minute, 5*time.Second).Should(BeEmpty())
+
+		_, err = kubectl("apply", "-f", "test/e2e/fixtures/polaris.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		_, err = kubectl("wait", "--for=condition=available", "deployment/polaris", "--timeout=10m")
+		Expect(err).NotTo(HaveOccurred())
+		_, err = kubectl("wait", "--for=condition=complete", "job/polaris-setup", "--timeout=5m")
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = kubectl("apply", "-f", "test/e2e/fixtures/impalacluster-rest.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func() string { return clusterConditionOf(restClusterName, "Ready") }, 15*time.Minute, 10*time.Second).Should(Equal("True"))
+		Expect(statefulSetExists(restClusterName+"-catalog")).To(BeFalse(), "no catalogd without a Hive Metastore")
+
+		By("writing and reading an Iceberg table through the REST catalog")
+		addr := restClusterName + "-coordinator:21050"
+		Eventually(func() error {
+			_, err := impalaShellAt(addr, "", "select 1")
+			return err
+		}, 5*time.Minute, 10*time.Second).Should(Succeed())
+
+		out, err := impalaShellAt(addr, "", "show tables in e2e_rest")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(ContainSubstring("t"))
+
+		_, err = impalaShellAt(addr, "", "insert into e2e_rest.t values (1),(2),(3)")
+		Expect(err).NotTo(HaveOccurred())
+		out, err = impalaShellAt(addr, "", "select count(*) from e2e_rest.t")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(strings.TrimSpace(out)).To(Equal("3"))
+		out, err = impalaShellAt(addr, "", "describe formatted e2e_rest.t")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(ContainSubstring("s3a://warehouse/lake/"))
 	})
 })

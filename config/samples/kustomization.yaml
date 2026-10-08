@@ -1,4 +1,5 @@
 ## Append samples of your project ##
 resources:
 - impala_v1alpha1_impalacluster.yaml
+- impala_v1alpha1_impalacluster_polaris.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

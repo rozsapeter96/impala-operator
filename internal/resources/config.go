@@ -63,6 +63,10 @@ func BuildConfigMap(c *impalav1alpha1.ImpalaCluster) *corev1.ConfigMap {
 			data[file] = hadoopXML(props)
 		}
 	}
+	for i := range cc.IcebergRESTCatalogs {
+		cat := &cc.IcebergRESTCatalogs[i]
+		data[RESTCatalogFileKey(cat)] = javaProperties(restCatalogProperties(cat))
+	}
 	return &corev1.ConfigMap{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
 		ObjectMeta: metav1.ObjectMeta{
@@ -106,6 +110,9 @@ func ConfigHash(cm *corev1.ConfigMap) string {
 }
 
 func hiveSiteProps(cc *impalav1alpha1.ClusterConfig) map[string]string {
+	if cc.HiveMetastore == nil {
+		return map[string]string{}
+	}
 	return map[string]string{
 		"hive.metastore.uris": cc.HiveMetastore.URIs,
 		// Required for catalogd HMS event polling.

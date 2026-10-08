@@ -44,7 +44,7 @@ var _ = Describe("ImpalaCluster controller", func() {
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
 			Spec: impalav1alpha1.ImpalaClusterSpec{
 				ClusterConfig: impalav1alpha1.ClusterConfig{
-					HiveMetastore: impalav1alpha1.HiveMetastoreSpec{URIs: "thrift://hms:9083"},
+					HiveMetastore: &impalav1alpha1.HiveMetastoreSpec{URIs: "thrift://hms:9083"},
 				},
 				Coordinators: impalav1alpha1.CoordinatorSpec{Replicas: new(int32(1))},
 				ExecutorGroups: []impalav1alpha1.ExecutorGroupSpec{{
@@ -192,6 +192,73 @@ var _ = Describe("ImpalaCluster controller", func() {
 			Config: impalav1alpha1.ExecutorConfig{DataCache: &impalav1alpha1.VolumeSpec{Size: resource.MustParse("1Gi")}},
 		})
 		Expect(k8sClient.Update(ctx, cluster)).To(Succeed())
+	})
+
+	It("runs without catalogd when only Iceberg REST catalogs are configured", func(ctx SpecContext) {
+		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "polaris-creds", Namespace: namespace}, StringData: map[string]string{"credential": "id:secret"}}
+		Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+		DeferCleanup(func(ctx SpecContext) { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, secret))).To(Succeed()) })
+
+		cluster := newCluster("rest")
+		cluster.Spec.ClusterConfig.IcebergRESTCatalogs = []impalav1alpha1.IcebergRESTCatalogSpec{{
+			Name:      "polaris",
+			URI:       "http://polaris:8181/api/catalog",
+			Warehouse: "lake",
+			OAuth2: &impalav1alpha1.RESTCatalogOAuth2Spec{
+				CredentialSecretRef: impalav1alpha1.SecretKeyReference{Name: "polaris-creds"},
+				Scope:               "PRINCIPAL_ROLE:ALL",
+			},
+		}}
+		Expect(k8sClient.Create(ctx, cluster)).To(Succeed())
+		DeferCleanup(func(ctx SpecContext) { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, cluster))).To(Succeed()) })
+
+		// Hybrid mode first: HMS plus a REST catalog, catalogd deployed.
+		Eventually(func() error { _, err := getSTS(ctx, "rest-catalog"); return err }).WithContext(ctx).Should(Succeed())
+		Eventually(func(g Gomega) {
+			coord, err := getSTS(ctx, "rest-coordinator")
+			g.Expect(err).NotTo(HaveOccurred())
+			args := coord.Spec.Template.Spec.Containers[0].Args
+			g.Expect(args).To(ContainElement("-catalog_config_dir=/opt/impala/catalogs"))
+			g.Expect(args).To(ContainElement("-catalog_service_host=rest-catalog"))
+		}).WithContext(ctx).Should(Succeed())
+		cm := &corev1.ConfigMap{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "rest-conf", Namespace: namespace}, cm)).To(Succeed())
+		Expect(cm.Data).To(HaveKey("rest-catalog-polaris.properties"))
+		Expect(cm.Data["rest-catalog-polaris.properties"]).To(ContainSubstring("${ENV:IMPALA_REST_CATALOG_POLARIS_CREDENTIAL}"))
+		Expect(cm.Data["rest-catalog-polaris.properties"]).NotTo(ContainSubstring("id:secret"))
+
+		// Dropping the metastore switches to standalone mode and removes catalogd.
+		Eventually(func(g Gomega) {
+			live := &impalav1alpha1.ImpalaCluster{}
+			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cluster), live)).To(Succeed())
+			live.Spec.ClusterConfig.HiveMetastore = nil
+			g.Expect(k8sClient.Update(ctx, live)).To(Succeed())
+		}).WithContext(ctx).Should(Succeed())
+
+		Eventually(func() error {
+			_, err := getSTS(ctx, "rest-catalog")
+			if err == nil {
+				return fmt.Errorf("catalog statefulset still exists")
+			}
+			return client.IgnoreNotFound(err)
+		}).WithContext(ctx).Should(Succeed())
+		Eventually(func(g Gomega) {
+			coord, err := getSTS(ctx, "rest-coordinator")
+			g.Expect(err).NotTo(HaveOccurred())
+			args := coord.Spec.Template.Spec.Containers[0].Args
+			g.Expect(args).To(ContainElement("-catalogd_deployed=false"))
+			g.Expect(args).NotTo(ContainElement("-catalog_service_host=rest-catalog"))
+			live := &impalav1alpha1.ImpalaCluster{}
+			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cluster), live)).To(Succeed())
+			g.Expect(live.Status.ObservedGeneration).To(Equal(live.Generation))
+			g.Expect(live.Status.Catalog.Replicas).To(BeZero())
+			g.Expect(meta.IsStatusConditionFalse(live.Status.Conditions, impalav1alpha1.ConditionDegraded)).To(BeTrue())
+		}).WithContext(ctx).Should(Succeed())
+
+		// A cluster with neither a metastore nor a REST catalog is rejected.
+		bad := newCluster("cel-nocatalog")
+		bad.Spec.ClusterConfig.HiveMetastore = nil
+		Expect(k8sClient.Create(ctx, bad)).To(MatchError(ContainSubstring("clusterConfig needs a hiveMetastore")))
 	})
 
 	It("marks the cluster degraded when a referenced secret is missing", func(ctx SpecContext) {

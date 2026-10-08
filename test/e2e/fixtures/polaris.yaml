@@ -1,0 +1,103 @@
+# Apache Polaris with in-memory persistence, storing the "lake" catalog on
+# the e2e MinIO bucket. The setup Job bootstraps the catalog, the grants and
+# an empty Iceberg table that the Impala cluster then writes and reads.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: polaris-impala
+stringData:
+  # OAuth2 client credential in Iceberg's "<client-id>:<client-secret>" form:
+  # the bootstrap root principal (POLARIS_BOOTSTRAP_CREDENTIALS below).
+  credential: root:s3cr3t
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: polaris
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: polaris}
+  template:
+    metadata:
+      labels: {app: polaris}
+    spec:
+      containers:
+        - name: polaris
+          image: apache/polaris:1.8.0
+          env:
+            - {name: POLARIS_BOOTSTRAP_CREDENTIALS, value: "POLARIS,root,s3cr3t"}
+            - {name: polaris.realm-context.realms, value: POLARIS}
+            - {name: quarkus.otel.sdk.disabled, value: "true"}
+            # Polaris writes table metadata itself, with the AWS SDK default
+            # credential chain, so it needs the MinIO credentials.
+            - {name: AWS_REGION, value: us-east-1}
+            - {name: AWS_ACCESS_KEY_ID, value: minioadmin}
+            - {name: AWS_SECRET_ACCESS_KEY, value: minioadmin}
+          ports:
+            - {containerPort: 8181, name: api}
+            - {containerPort: 8182, name: mgmt}
+          readinessProbe:
+            httpGet: {path: /q/health, port: 8182}
+            periodSeconds: 5
+            failureThreshold: 60
+          resources:
+            requests: {cpu: 250m, memory: 1Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: polaris
+spec:
+  selector: {app: polaris}
+  ports:
+    - {name: api, port: 8181, targetPort: 8181}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: polaris-setup
+spec:
+  backoffLimit: 20
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: setup
+          image: alpine/curl:8.14.1
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              # Reruns are idempotent: 409 (already exists) is accepted. 5xx
+              # (Polaris or MinIO still warming up) is retried.
+              api() { # method path [json]
+                for attempt in 1 2 3 4 5 6 7 8 9 10; do
+                  code=$(curl -s -o /tmp/out -w '%{http_code}' -X "$1" \
+                    -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+                    "http://polaris:8181$2" ${3:+-d "$3"})
+                  echo "$1 $2 -> $code"
+                  case "$code" in
+                    2*|409) return 0;;
+                    5*) cat /tmp/out; sleep 5;;
+                    *) cat /tmp/out; exit 1;;
+                  esac
+                done
+                exit 1
+              }
+              until TOKEN=$(curl -sf http://polaris:8181/api/catalog/v1/oauth/tokens \
+                  --user root:s3cr3t -d grant_type=client_credentials -d scope=PRINCIPAL_ROLE:ALL \
+                  | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p') && [ -n "$TOKEN" ]; do
+                echo "waiting for polaris"; sleep 3
+              done
+              api POST /api/management/v1/catalogs '{"catalog":{"name":"lake","type":"INTERNAL",
+                "properties":{"default-base-location":"s3a://warehouse/lake"},
+                "storageConfigInfo":{"storageType":"S3","allowedLocations":["s3a://warehouse/lake"],
+                  "endpoint":"http://minio:9000","pathStyleAccess":true,"stsUnavailable":true,"region":"us-east-1"}}}'
+              api PUT /api/management/v1/catalogs/lake/catalog-roles/catalog_admin/grants \
+                '{"grant":{"type":"catalog","privilege":"CATALOG_MANAGE_CONTENT"}}'
+              api PUT /api/management/v1/principal-roles/service_admin/catalog-roles/lake \
+                '{"catalogRole":{"name":"catalog_admin"}}'
+              api POST /api/catalog/v1/lake/namespaces '{"namespace":["e2e_rest"]}'
+              api POST /api/catalog/v1/lake/namespaces/e2e_rest/tables '{"name":"t",
+                "schema":{"type":"struct","schema-id":0,"fields":[{"id":1,"name":"id","required":false,"type":"int"}]}}'
+              echo "polaris setup complete"

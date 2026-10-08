@@ -150,6 +150,11 @@ func ReferencedSecrets(c *impalav1alpha1.ImpalaCluster) []string {
 	if s3 := c.Spec.ClusterConfig.Storage.S3; s3 != nil && s3.CredentialsSecretRef != nil {
 		names = append(names, s3.CredentialsSecretRef.Name)
 	}
+	for i := range c.Spec.ClusterConfig.IcebergRESTCatalogs {
+		if oauth := c.Spec.ClusterConfig.IcebergRESTCatalogs[i].OAuth2; oauth != nil {
+			names = append(names, oauth.CredentialSecretRef.Name)
+		}
+	}
 	return names
 }
 

@@ -26,13 +26,17 @@ import (
 )
 
 func catalogReplicas(c *impalav1alpha1.ImpalaCluster) int32 {
+	if !CatalogdDeployed(c) {
+		return 0
+	}
 	if c.Spec.Catalog.Replicas != nil {
 		return *c.Spec.Catalog.Replicas
 	}
 	return 1
 }
 
-// BuildCatalog renders the catalog StatefulSet and Services.
+// BuildCatalog renders the catalog StatefulSet and Services. It must only be
+// called when CatalogdDeployed reports true.
 func BuildCatalog(c *impalav1alpha1.ImpalaCluster, configHash string) (*appsv1.StatefulSet, []*corev1.Service) {
 	name := CatalogName(c)
 	headless := HeadlessName(name)
@@ -42,8 +46,8 @@ func BuildCatalog(c *impalav1alpha1.ImpalaCluster, configHash string) (*appsv1.S
 		topicMode = "minimal"
 	}
 	polling := int32(1)
-	if v := c.Spec.ClusterConfig.HiveMetastore.EventPollingIntervalSeconds; v != nil {
-		polling = *v
+	if hms := c.Spec.ClusterConfig.HiveMetastore; hms != nil && hms.EventPollingIntervalSeconds != nil {
+		polling = *hms.EventPollingIntervalSeconds
 	}
 	args := []string{
 		"-state_store_host=" + StatestoreName(c),
