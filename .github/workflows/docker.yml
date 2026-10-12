@@ -59,3 +59,28 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # The Helm chart is published as an OCI artifact next to the image, only
+  # for release tags: chart and app version both come from the vX.Y.Z tag.
+  chart:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+
+      - name: Package and push chart
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          helm lint dist/chart
+          helm package dist/chart --version "$version" --app-version "$version" --destination out
+          helm push "out/impala-operator-$version.tgz" "oci://${{ env.REGISTRY }}/$owner/charts"

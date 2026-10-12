@@ -27,12 +27,15 @@ Documentation:
 Requirements: a Kubernetes 1.30+ cluster, `kubectl`, and a Hive Metastore
 reachable from the cluster. CI publishes a multi-arch operator image to
 `ghcr.io/rozsapeter96/impala-operator` on every push to the default branch
-(`latest`) and on every `v*` tag (`X.Y.Z`, `X.Y`). To build your own instead,
+(`latest`) and on every `v*` tag (`X.Y.Z`, `X.Y`). Tags also publish the Helm
+chart as an OCI artifact at `oci://ghcr.io/rozsapeter96/charts/impala-operator`,
+with the chart and image version taken from the tag. To build your own instead,
 run `make docker-build IMG=<registry>/impala-operator:dev` and push it (for a
 kind cluster, `kind load docker-image` instead of pushing).
 
 ```sh
-# Install the CRD and deploy the operator
+# Install the CRD and deploy the operator (or: helm install impala-operator \
+#   oci://ghcr.io/rozsapeter96/charts/impala-operator --version X.Y.Z)
 make install deploy IMG=ghcr.io/rozsapeter96/impala-operator:latest
 
 # Create an S3 credentials Secret and a cluster
