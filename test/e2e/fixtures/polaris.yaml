@@ -1,5 +1,5 @@
 # Apache Polaris with in-memory persistence, storing the "lake" catalog on
-# the e2e MinIO bucket. The setup Job bootstraps the catalog, the grants and
+# the e2e RustFS bucket. The setup Job bootstraps the catalog, the grants and
 # an empty Iceberg table that the Impala cluster then writes and reads.
 apiVersion: v1
 kind: Secret
@@ -30,10 +30,10 @@ spec:
             - {name: polaris.realm-context.realms, value: POLARIS}
             - {name: quarkus.otel.sdk.disabled, value: "true"}
             # Polaris writes table metadata itself, with the AWS SDK default
-            # credential chain, so it needs the MinIO credentials.
+            # credential chain, so it needs the RustFS credentials.
             - {name: AWS_REGION, value: us-east-1}
-            - {name: AWS_ACCESS_KEY_ID, value: minioadmin}
-            - {name: AWS_SECRET_ACCESS_KEY, value: minioadmin}
+            - {name: AWS_ACCESS_KEY_ID, value: rustfsadmin}
+            - {name: AWS_SECRET_ACCESS_KEY, value: rustfsadmin}
           ports:
             - {containerPort: 8181, name: api}
             - {containerPort: 8182, name: mgmt}
@@ -69,7 +69,7 @@ spec:
           args:
             - |
               # Reruns are idempotent: 409 (already exists) is accepted. 5xx
-              # (Polaris or MinIO still warming up) is retried.
+              # (Polaris or RustFS still warming up) is retried.
               api() { # method path [json]
                 for attempt in 1 2 3 4 5 6 7 8 9 10; do
                   code=$(curl -s -o /tmp/out -w '%{http_code}' -X "$1" \
@@ -92,7 +92,7 @@ spec:
               api POST /api/management/v1/catalogs '{"catalog":{"name":"lake","type":"INTERNAL",
                 "properties":{"default-base-location":"s3a://warehouse/lake"},
                 "storageConfigInfo":{"storageType":"S3","allowedLocations":["s3a://warehouse/lake"],
-                  "endpoint":"http://minio:9000","pathStyleAccess":true,"stsUnavailable":true,"region":"us-east-1"}}}'
+                  "endpoint":"http://rustfs:9000","pathStyleAccess":true,"stsUnavailable":true,"region":"us-east-1"}}}'
               api PUT /api/management/v1/catalogs/lake/catalog-roles/catalog_admin/grants \
                 '{"grant":{"type":"catalog","privilege":"CATALOG_MANAGE_CONTENT"}}'
               api PUT /api/management/v1/principal-roles/service_admin/catalog-roles/lake \

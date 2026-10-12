@@ -144,7 +144,7 @@ status:
 hack/install-tools.sh        # Go, kubebuilder, kind, kubectl, helm into ~/.local
 make test                    # unit + envtest
 make lint
-make test-e2e                # kind cluster with MinIO, HMS, Polaris and real Impala clusters
+make test-e2e                # kind cluster with RustFS, HMS, Polaris and real Impala clusters
 # DOCKER_BUILD_ARGS=--network=host make test-e2e   # if buildkit cannot reach the Go proxy
 make api-docs                # regenerate doc/api.md
 helm install impala-operator dist/chart   # or install via the generated chart

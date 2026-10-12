@@ -1,5 +1,5 @@
 # Hive Metastore (embedded Derby) from the Impala quickstart image, with the
-# warehouse on MinIO.
+# warehouse on RustFS.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -22,11 +22,11 @@ data:
   core-site.xml: |
     <?xml version="1.0"?>
     <configuration>
-      <property><name>fs.s3a.endpoint</name><value>http://minio:9000</value></property>
+      <property><name>fs.s3a.endpoint</name><value>http://rustfs:9000</value></property>
       <property><name>fs.s3a.path.style.access</name><value>true</value></property>
       <property><name>fs.s3a.connection.ssl.enabled</name><value>false</value></property>
-      <property><name>fs.s3a.access.key</name><value>minioadmin</value></property>
-      <property><name>fs.s3a.secret.key</name><value>minioadmin</value></property>
+      <property><name>fs.s3a.access.key</name><value>rustfsadmin</value></property>
+      <property><name>fs.s3a.secret.key</name><value>rustfsadmin</value></property>
     </configuration>
 ---
 apiVersion: apps/v1

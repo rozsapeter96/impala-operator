@@ -1,0 +1,75 @@
+# RustFS as an S3-compatible object store for e2e tests. (MinIO's community
+# images are no longer published, so the suite uses RustFS instead.)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: impala-s3-credentials
+type: Opaque
+stringData:
+  AWS_ACCESS_KEY_ID: rustfsadmin
+  AWS_SECRET_ACCESS_KEY: rustfsadmin
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rustfs
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: rustfs}
+  template:
+    metadata:
+      labels: {app: rustfs}
+    spec:
+      containers:
+        - name: rustfs
+          image: rustfs/rustfs:1.0.1
+          env:
+            - {name: RUSTFS_ACCESS_KEY, value: rustfsadmin}
+            - {name: RUSTFS_SECRET_KEY, value: rustfsadmin}
+            - {name: RUSTFS_ADDRESS, value: ":9000"}
+            - {name: RUSTFS_CONSOLE_ENABLE, value: "false"}
+            - {name: RUSTFS_OBS_LOGGER_LEVEL, value: warn}
+          ports:
+            - {containerPort: 9000, name: s3}
+          readinessProbe:
+            httpGet: {path: /health/ready, port: 9000}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustfs
+spec:
+  selector: {app: rustfs}
+  ports:
+    - {name: s3, port: 9000, targetPort: 9000}
+---
+# Creates the warehouse bucket once RustFS is up.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rustfs-bucket
+spec:
+  backoffLimit: 20
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: aws
+          image: amazon/aws-cli:2.37.12
+          env:
+            - {name: AWS_ACCESS_KEY_ID, value: rustfsadmin}
+            - {name: AWS_SECRET_ACCESS_KEY, value: rustfsadmin}
+            - {name: AWS_DEFAULT_REGION, value: us-east-1}
+            - {name: AWS_ENDPOINT_URL, value: http://rustfs:9000}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              until aws s3 ls >/dev/null; do sleep 2; done
+              aws s3api head-bucket --bucket warehouse 2>/dev/null || aws s3 mb s3://warehouse

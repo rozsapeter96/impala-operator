@@ -20,7 +20,7 @@ spec:
           io-impl: org.apache.iceberg.hadoop.HadoopFileIO
     storage:
       s3:
-        endpoint: http://minio:9000
+        endpoint: http://rustfs:9000
         pathStyleAccess: true
         credentialsSecretRef:
           name: impala-s3-credentials

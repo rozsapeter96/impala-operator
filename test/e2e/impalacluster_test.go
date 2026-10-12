@@ -59,8 +59,8 @@ var impalaImages = []string{
 	"apache/impala:" + impalaVersion + "-impalad_executor",
 	"apache/impala:" + impalaVersion + "-impala_quickstart_hms",
 	"apache/impala:" + impalaVersion + "-impala_quickstart_client",
-	"quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z",
-	"quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z",
+	"rustfs/rustfs:1.0.1",
+	"amazon/aws-cli:2.37.12",
 }
 
 func kubectl(args ...string) (string, error) {
@@ -134,15 +134,15 @@ var _ = Describe("ImpalaCluster", Ordered, func() {
 			"deployment/impala-operator-controller-manager", "--timeout=5m"))
 		Expect(err).NotTo(HaveOccurred())
 
-		By("creating the test namespace with MinIO and a Hive Metastore")
+		By("creating the test namespace with RustFS and a Hive Metastore")
 		_, _ = utils.Run(exec.Command("kubectl", "create", "ns", clusterNamespace))
-		_, err = kubectl("apply", "-f", "test/e2e/fixtures/minio.yaml")
+		_, err = kubectl("apply", "-f", "test/e2e/fixtures/rustfs.yaml")
 		Expect(err).NotTo(HaveOccurred())
 		_, err = kubectl("apply", "-f", "test/e2e/fixtures/hms.yaml")
 		Expect(err).NotTo(HaveOccurred())
-		_, err = kubectl("wait", "--for=condition=available", "deployment/minio", "deployment/hms", "--timeout=10m")
+		_, err = kubectl("wait", "--for=condition=available", "deployment/rustfs", "deployment/hms", "--timeout=10m")
 		Expect(err).NotTo(HaveOccurred())
-		_, err = kubectl("wait", "--for=condition=complete", "job/minio-bucket", "--timeout=5m")
+		_, err = kubectl("wait", "--for=condition=complete", "job/rustfs-bucket", "--timeout=5m")
 		Expect(err).NotTo(HaveOccurred())
 
 		By("starting an impala-shell client pod")
@@ -329,7 +329,7 @@ var _ = Describe("ImpalaCluster", Ordered, func() {
 		// The kind node cannot host two Impala clusters, so the HMS-backed one
 		// makes room for a master-build cluster that has no catalogd and no
 		// metastore: its coordinator reads the "lake" catalog from Polaris,
-		// which stores metadata on the same MinIO bucket. The setup Job in
+		// which stores metadata on the same RustFS bucket. The setup Job in
 		// polaris.yaml creates an empty Iceberg table; Impala writes it with
 		// INSERT INTO (routed by the catalog name) and reads it back.
 		By("replacing the HMS cluster with Polaris and a standalone REST cluster")
