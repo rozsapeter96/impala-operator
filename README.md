@@ -24,16 +24,16 @@ Documentation:
 
 ## Quick start
 
-Requirements: a Kubernetes 1.30+ cluster, `kubectl`, Docker, and a Hive
-Metastore reachable from the cluster. No prebuilt operator image is published
-yet, so build one and push it to a registry your cluster can pull from (for
-a kind cluster, `kind load docker-image` instead of pushing).
+Requirements: a Kubernetes 1.30+ cluster, `kubectl`, and a Hive Metastore
+reachable from the cluster. CI publishes a multi-arch operator image to
+`ghcr.io/rozsapeter96/impala-operator` on every push to the default branch
+(`latest`) and on every `v*` tag (`X.Y.Z`, `X.Y`). To build your own instead,
+run `make docker-build IMG=<registry>/impala-operator:dev` and push it (for a
+kind cluster, `kind load docker-image` instead of pushing).
 
 ```sh
-# Build the operator image, install the CRD and deploy the operator
-make docker-build IMG=<registry>/impala-operator:dev
-docker push <registry>/impala-operator:dev
-make install deploy IMG=<registry>/impala-operator:dev
+# Install the CRD and deploy the operator
+make install deploy IMG=ghcr.io/rozsapeter96/impala-operator:latest
 
 # Create an S3 credentials Secret and a cluster
 kubectl create secret generic impala-s3-credentials \
