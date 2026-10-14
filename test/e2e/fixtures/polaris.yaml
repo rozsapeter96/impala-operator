@@ -1,5 +1,8 @@
 # Apache Polaris with in-memory persistence, storing the "lake" catalog on
-# the e2e RustFS bucket. The setup Job bootstraps the catalog, the grants and
+# the e2e RustFS bucket. The base location uses s3a:// on purpose: Impala
+# cannot scan s3:// locations (planner NPE) and refuses to INSERT into them
+# ("not a supported filesystem"); see doc/catalogs.md.
+# The setup Job bootstraps the catalog, the grants and
 # an empty Iceberg table that the Impala cluster then writes and reads.
 apiVersion: v1
 kind: Secret

@@ -22,7 +22,9 @@ import (
 	"encoding/xml"
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -125,6 +127,11 @@ func hiveSiteProps(cc *impalav1alpha1.ClusterConfig) map[string]string {
 func coreSiteProps(cc *impalav1alpha1.ClusterConfig) map[string]string {
 	props := map[string]string{}
 	if s3 := cc.Storage.S3; s3 != nil {
+		// Only s3a:// is configured on purpose. Mapping fs.s3.impl to S3A as
+		// well lets Hadoop open "s3://" locations, but Impala's planner has no
+		// FsType for that scheme and fails every scan with a
+		// NullPointerException (HdfsScanNode.computeScanRangeLocations), and
+		// its writable-filesystem list rejects INSERTs. See doc/catalogs.md.
 		props["fs.s3a.impl"] = "org.apache.hadoop.fs.s3a.S3AFileSystem"
 		props["fs.s3a.connection.maximum"] = "1500"
 		if s3.Endpoint != "" {
@@ -164,17 +171,50 @@ func llamaSiteProps(pools []impalav1alpha1.PoolSpec) map[string]string {
 		if p.QueueTimeoutMs != nil {
 			props["impala.admission-control.pool-queue-timeout-ms."+name] = fmt.Sprint(*p.QueueTimeoutMs)
 		}
+		// Impala reads these two with Configuration.getLong, so they must be
+		// plain byte counts; the CRD accepts Impala's "8gb" style.
 		if p.MaxQueryMemLimit != "" {
-			props["impala.admission-control.max-query-mem-limit."+name] = p.MaxQueryMemLimit
+			props["impala.admission-control.max-query-mem-limit."+name] = memSpecBytes(p.MaxQueryMemLimit)
 		}
 		if p.MinQueryMemLimit != "" {
-			props["impala.admission-control.min-query-mem-limit."+name] = p.MinQueryMemLimit
+			props["impala.admission-control.min-query-mem-limit."+name] = memSpecBytes(p.MinQueryMemLimit)
 		}
 		if len(p.DefaultQueryOptions) > 0 {
 			props["impala.admission-control.pool-default-query-options."+name] = joinOptions(p.DefaultQueryOptions)
 		}
 	}
 	return props
+}
+
+// memSpecRe matches Impala's memory spec syntax: a number with an optional
+// b/kb/mb/gb/tb suffix (case-insensitive, "k"/"m"/"g"/"t" alone also work).
+var memSpecRe = regexp.MustCompile(`^([0-9]+(?:\.[0-9]+)?)\s*([bB]|[kKmMgGtT][bB]?)?$`)
+
+// memSpecBytes converts an Impala-style memory spec such as "8gb" to a
+// decimal byte count. A value the CRD pattern would have rejected is
+// returned unchanged so the problem surfaces in Impala's logs rather than
+// being silently dropped.
+func memSpecBytes(spec string) string {
+	m := memSpecRe.FindStringSubmatch(strings.TrimSpace(spec))
+	if m == nil {
+		return spec
+	}
+	n, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		return spec
+	}
+	var unit float64 = 1
+	switch strings.ToLower(m[2]) {
+	case "k", "kb":
+		unit = 1 << 10
+	case "m", "mb":
+		unit = 1 << 20
+	case "g", "gb":
+		unit = 1 << 30
+	case "t", "tb":
+		unit = 1 << 40
+	}
+	return strconv.FormatInt(int64(n*unit), 10)
 }
 
 // joinOptions renders a map as "k=v,k=v" with sorted keys.

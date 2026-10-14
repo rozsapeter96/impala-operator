@@ -27,6 +27,7 @@ spec:
           maxRunningQueries: 1
           maxQueuedQueries: 10
           queueTimeoutMs: 300000
+          maxQueryMemLimit: 1gb   # written to llama-site.xml in bytes
         # Served by the "burst" family below, which starts with zero groups
         # and is sized so that one query saturates a group's single
         # admission slot. It exercises cold start, slot-driven scale-up and
@@ -35,6 +36,7 @@ spec:
           maxRunningQueries: 10
           maxQueuedQueries: 10
           queueTimeoutMs: 300000
+          maxQueryMemLimit: 1gb   # written to llama-site.xml in bytes
   statestore:
     config: {jvmHeap: 256m}
   catalog:

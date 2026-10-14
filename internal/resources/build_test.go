@@ -134,10 +134,29 @@ func TestConfigMapContents(t *testing.T) {
 	for _, want := range []string{
 		"llama.am.throttling.maximum.placed.reservations.root.default</name>", "<value>4</value>",
 		"llama.am.throttling.maximum.queued.reservations.root.default", "<value>20</value>",
-		"impala.admission-control.max-query-mem-limit.root.default", "<value>8gb</value>",
+		"impala.admission-control.max-query-mem-limit.root.default", "<value>8589934592</value>",
 	} {
 		if !strings.Contains(llama, want) {
 			t.Errorf("llama-site missing %q:\n%s", want, llama)
+		}
+	}
+}
+
+func TestMemSpecBytes(t *testing.T) {
+	for in, want := range map[string]string{
+		"8GB":        "8589934592",
+		"16gb":       "17179869184",
+		"1g":         "1073741824",
+		"256mb":      "268435456",
+		"1.5 gb":     "1610612736",
+		"512k":       "524288",
+		"2tb":        "2199023255552",
+		"1024":       "1024",
+		"4096b":      "4096",
+		"not-a-size": "not-a-size", // rejected by the CRD; passed through verbatim
+	} {
+		if got := memSpecBytes(in); got != want {
+			t.Errorf("memSpecBytes(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
@@ -437,6 +456,25 @@ func polarisCluster() *impalav1alpha1.ImpalaCluster {
 		Properties: map[string]string{"io-impl": "org.apache.iceberg.hadoop.HadoopFileIO"},
 	}}
 	return c
+}
+
+func TestRESTCatalogWithoutAuth(t *testing.T) {
+	c := polarisCluster()
+	c.Spec.ClusterConfig.IcebergRESTCatalogs[0].OAuth2 = nil
+	c.Spec.ClusterConfig.IcebergRESTCatalogs[0].Properties = map[string]string{
+		"header.X-Tenant": "acme", // static REST headers pass through unchanged
+	}
+	props := BuildConfigMap(c).Data["rest-catalog-polaris.properties"]
+	// Impala rejects security=NONE; an unauthenticated catalog must omit the
+	// key (and every oauth2.* key) altogether.
+	for _, forbidden := range []string{"iceberg.rest-catalog.security", "oauth2"} {
+		if strings.Contains(props, forbidden) {
+			t.Errorf("no-auth catalog must not contain %q:\n%s", forbidden, props)
+		}
+	}
+	if !strings.Contains(props, "header.X-Tenant=acme\n") {
+		t.Errorf("properties must pass header.* through:\n%s", props)
+	}
 }
 
 func TestRESTCatalogAlongsideHMS(t *testing.T) {

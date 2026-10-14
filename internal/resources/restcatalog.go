@@ -74,6 +74,9 @@ func restCatalogProperties(cat *impalav1alpha1.IcebergRESTCatalogSpec) map[strin
 	if cat.VendedCredentials {
 		props["iceberg.rest-catalog.vended-credentials-enabled"] = trueStr
 	}
+	// Without oauth2 the security key is left out entirely: Impala's
+	// ConfigLoader rejects an explicit "NONE", and omitting the key is how
+	// an unauthenticated catalog is expressed.
 	if oauth := cat.OAuth2; oauth != nil {
 		props["iceberg.rest-catalog.security"] = "OAUTH2"
 		// The secret value is resolved by Impala at startup from the pod

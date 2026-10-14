@@ -620,8 +620,8 @@ _Appears in:_
 | `maxQueuedQueries` _integer_ | maxQueuedQueries limits queued queries before rejection. |  |  |
 | `queueTimeoutMs` _integer_ | queueTimeoutMs is how long a query may wait in the queue. |  |  |
 | `maxMemResources` _string_ | maxMemResources is the pool's aggregate memory cap in fair-scheduler<br />syntax, e.g. "50000 mb". |  |  |
-| `maxQueryMemLimit` _string_ | maxQueryMemLimit caps the per-node memory of a query, e.g. "8gb". |  |  |
-| `minQueryMemLimit` _string_ | minQueryMemLimit floors the per-node memory of a query, e.g. "1gb". |  |  |
+| `maxQueryMemLimit` _string_ | maxQueryMemLimit caps the per-node memory of a query, e.g. "8gb".<br />Accepts a byte count or a number with a b/kb/mb/gb/tb suffix; the<br />operator writes it to llama-site.xml in bytes, which is all Impala<br />accepts there. |  | Pattern: `^[0-9]+(\.[0-9]+)?\s*([bB]\|[kKmMgGtT][bB]?)?$` <br /> |
+| `minQueryMemLimit` _string_ | minQueryMemLimit floors the per-node memory of a query, e.g. "1gb".<br />Same syntax and conversion as maxQueryMemLimit. |  | Pattern: `^[0-9]+(\.[0-9]+)?\s*([bB]\|[kKmMgGtT][bB]?)?$` <br /> |
 | `defaultQueryOptions` _object (keys:string, values:string)_ | defaultQueryOptions applied to every query in the pool. |  |  |
 
 

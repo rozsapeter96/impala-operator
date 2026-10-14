@@ -100,6 +100,30 @@ for data access by default. Two things can get in the way:
   catalog for per-table storage credentials on every table load instead of
   using the cluster's credentials. Leave it off unless the catalog is set up
   for credential vending and the executors can use the vended credentials.
+* **`s3://` locations.** Impala only works with `s3a://` paths, so the
+  catalog's base location (Polaris: `default-base-location` and
+  `allowedLocations`) must use that scheme for tables Impala reads or
+  writes. Many engines record `s3://`; such tables cannot be queried from
+  Impala 4.x (verified against 4.5.2 and a master build). Mapping
+  `fs.s3.impl` to the S3A client in `core-site.xml` does not help: the
+  table then loads, but every scan fails with a `NullPointerException` in
+  the planner because Impala has no filesystem type for the `s3` scheme, and
+  an INSERT is refused with "is not a supported filesystem". The operator
+  therefore configures `s3a` only.
+
+### Authentication and headers
+
+With `oauth2` set, the operator writes `iceberg.rest-catalog.security=OAUTH2`
+and the client-credentials settings. Without it the security key is omitted
+entirely, which is how Impala expresses an unauthenticated catalog (an
+explicit `NONE` is rejected). Static HTTP headers for every catalog request,
+for example a tenant or routing header, pass through `properties` with the
+Iceberg `header.` prefix:
+
+```yaml
+properties:
+  header.X-Tenant: acme
+```
 
 ## Other REST catalogs
 

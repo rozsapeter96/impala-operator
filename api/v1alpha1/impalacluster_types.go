@@ -216,10 +216,16 @@ type PoolSpec struct {
 	MaxMemResources string `json:"maxMemResources,omitempty"`
 
 	// maxQueryMemLimit caps the per-node memory of a query, e.g. "8gb".
+	// Accepts a byte count or a number with a b/kb/mb/gb/tb suffix; the
+	// operator writes it to llama-site.xml in bytes, which is all Impala
+	// accepts there.
+	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?\s*([bB]|[kKmMgGtT][bB]?)?$`
 	// +optional
 	MaxQueryMemLimit string `json:"maxQueryMemLimit,omitempty"`
 
 	// minQueryMemLimit floors the per-node memory of a query, e.g. "1gb".
+	// Same syntax and conversion as maxQueryMemLimit.
+	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?\s*([bB]|[kKmMgGtT][bB]?)?$`
 	// +optional
 	MinQueryMemLimit string `json:"minQueryMemLimit,omitempty"`
 
